@@ -1,4 +1,5 @@
--- Sharked database setup. Paste all of this into Supabase → SQL Editor → Run.
+-- Sharked database setup, part 1. Paste into Supabase → SQL Editor → Run,
+-- then do the same with 002_territory.sql.
 -- Safe to run more than once.
 
 create table if not exists public.challenges (

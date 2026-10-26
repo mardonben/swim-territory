@@ -4,7 +4,7 @@ import { ensureSignedIn, supabase } from './supabase';
 function friendly(error) {
   if (error.code === '23505') return new Error('You already have a pending challenge.');
   if (error.code === '42P01' || error.code === 'PGRST205') {
-    return new Error('The database isn’t set up yet. Run supabase/schema.sql in Supabase.');
+    return new Error('The database isn’t set up yet. Run the scripts in the supabase folder.');
   }
   return error;
 }
@@ -36,27 +36,24 @@ export async function lockInChallenge({ coordinates, boundaryMetres, swimMetres 
   return data;
 }
 
-// Pretend swim for testing: marks the pending challenge as swum. Once Strava is
-// connected, a real watch-recorded swim will do this instead.
+// Pretend swim for testing: marks the pending challenge as swum and claims its
+// area, cutting it out of anyone's older territory. Once Strava is connected, a
+// real watch-recorded swim will do this instead.
 export async function completeChallenge(id) {
   await ensureSignedIn();
-  const { error } = await supabase
-    .from('challenges')
-    .update({ status: 'completed', completed_at: new Date().toISOString() })
-    .eq('id', id);
+  const { error } = await supabase.rpc('complete_challenge_test', { p_challenge_id: id });
   if (error) throw friendly(error);
 }
 
-// Every area the swimmer has claimed, oldest first so newer claims draw on top.
+// Everyone's territory as it stands now, each marked with whether it's yours.
 export async function getTerritory() {
-  await ensureSignedIn();
+  const me = await ensureSignedIn();
   const { data, error } = await supabase
-    .from('challenges')
-    .select('id, boundary, swim_metres, completed_at')
-    .eq('status', 'completed')
-    .order('completed_at', { ascending: true });
+    .from('territory')
+    .select('id, user_id, boundary, claimed_at')
+    .order('claimed_at', { ascending: true });
   if (error) throw friendly(error);
-  return data;
+  return data.map((t) => ({ ...t, mine: t.user_id === me.id }));
 }
 
 export async function cancelChallenge(id) {

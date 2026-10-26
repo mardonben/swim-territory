@@ -45,11 +45,11 @@ Shapes never go out to sea: they're trimmed to the coastline and cut straight ac
 
 Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as your pending challenge and shows on the map as an orange dashed area, with a banner saying how far to swim. You can have one pending challenge at a time; tap **Cancel** on the banner to drop it.
 
-The app is already connected to the Sharked Supabase project, and the `challenges` table is set up (`supabase/schema.sql`, safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
+The app is already connected to the Sharked Supabase project, and the database is set up with `supabase/001_challenges.sql` then `supabase/002_territory.sql` (both safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
 
 ## Claiming territory (test mode)
 
-While a challenge is pending, **✅ I swam it (test)** pretends you've done the swim. The challenge turns into your territory, filled in teal on the map, and the header counts your claimed areas. Once Strava is connected, a real watch-recorded swim will do this instead and the test button goes.
+While a challenge is pending, **✅ I swam it (test)** pretends you've done the swim and claims the area. **The newest claim always wins:** wherever it overlaps older territory, yours or another swimmer's, that piece is cut out of the older area and becomes part of the new one. Your territory shows in teal, other swimmers' in red, and the header counts the areas you hold. Once Strava is connected, a real watch-recorded swim will do this instead and the test button goes.
 
 ## Build plan
 
