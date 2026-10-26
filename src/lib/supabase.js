@@ -2,10 +2,12 @@ import 'react-native-url-polyfill/auto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const key = process.env.EXPO_PUBLIC_SUPABASE_KEY;
+// Ben's Sharked project. The publishable key is meant to ship inside apps:
+// row-level security in supabase/schema.sql is what protects the data.
+// .env.local can point at a different project instead.
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://lgdupjgrcxkdkhjfoymf.supabase.co';
+const key = process.env.EXPO_PUBLIC_SUPABASE_KEY || 'sb_publishable_J0Bs1CnDo3hA_U0L3mqcYw_TlsfJAnO';
 
-// null until both values are in .env.local, so the map still works without them.
 export const supabase =
   url && key
     ? createClient(url, key, {
