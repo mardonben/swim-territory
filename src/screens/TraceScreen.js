@@ -64,10 +64,13 @@ export default function TraceScreen() {
     run(`window.swimMap.showPending(${JSON.stringify(coords)})`);
   }
 
-  function showTerritory(claims) {
-    setTerritory(claims);
-    run(`window.swimMap.showTerritory(${JSON.stringify(claims.map((c) => c.boundary.coordinates[0]))})`);
+  function showTerritory(areas) {
+    setTerritory(areas);
+    const forMap = areas.map((a) => ({ geometry: a.boundary, mine: a.mine }));
+    run(`window.swimMap.showTerritory(${JSON.stringify(forMap)})`);
   }
+
+  const myAreas = territory.filter((a) => a.mine).length;
 
   // Once the map is up, jump to where the phone is and load your challenge and territory.
   useEffect(() => {
@@ -87,7 +90,7 @@ export default function TraceScreen() {
       await completeChallenge(pending.id);
       showPending(null);
       showTerritory(await getTerritory());
-      setStatus('🦈 Sharked it! That area is now your territory.');
+      setStatus('🦈 Sharked it! That area is yours now, including any bits you took from others.');
     } catch (e) {
       setStatus(`Couldn't claim it: ${e.message}`);
     } finally {
@@ -179,9 +182,9 @@ export default function TraceScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
-        {territory.length > 0 ? (
+        {myAreas > 0 ? (
           <Text style={styles.subtitle}>
-            {territory.length} {territory.length === 1 ? 'area' : 'areas'} claimed
+            {myAreas} {myAreas === 1 ? 'area' : 'areas'} held
           </Text>
         ) : null}
       </View>

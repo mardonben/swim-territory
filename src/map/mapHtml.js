@@ -156,15 +156,11 @@ ${outlineScript}
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
-    // Areas the swimmer has claimed: a list of boundary rings.
-    showTerritory(rings) {
+    // Everyone's territory: [{ geometry, mine }]. Yours is teal, others' red.
+    showTerritory(areas) {
       map.getSource('territory').setData({
         type: 'FeatureCollection',
-        features: rings.map((coords) => ({
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'Polygon', coordinates: [coords] },
-        })),
+        features: areas.map((a) => ({ type: 'Feature', properties: { mine: a.mine }, geometry: a.geometry })),
       });
     },
     // The locked-in challenge waiting for its swim, or null to remove it.
@@ -203,11 +199,17 @@ ${outlineScript}
     map.addSource('territory', { type: 'geojson', data: emptyFeature() });
     map.addLayer({
       id: 'territory-fill', type: 'fill', source: 'territory',
-      paint: { 'fill-color': '#00A79D', 'fill-opacity': 0.45 },
+      paint: {
+        'fill-color': ['case', ['get', 'mine'], '#00A79D', '#E74C3C'],
+        'fill-opacity': 0.45,
+      },
     });
     map.addLayer({
       id: 'territory-outline', type: 'line', source: 'territory',
-      paint: { 'line-color': '#00796B', 'line-width': 3 },
+      paint: {
+        'line-color': ['case', ['get', 'mine'], '#00796B', '#B03A2E'],
+        'line-width': 3,
+      },
     });
     map.addLayer({
       id: 'pending-fill', type: 'fill', source: 'pending',
