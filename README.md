@@ -41,10 +41,25 @@ Each time you want to try the latest version:
 
 Shapes never go out to sea: they're trimmed to the coastline and cut straight across river mouths. The boundary length sets the swim. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
+## Locking in a challenge (needs Supabase, one-time setup)
+
+Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as your pending challenge and shows on the map as an orange dashed area, with a banner saying how far to swim. You can have one pending challenge at a time; tap **Cancel** on the banner to drop it.
+
+One-time setup:
+
+1. In the Supabase dashboard, open your project, go to **SQL Editor**, paste the whole of `supabase/schema.sql` and press **Run**.
+2. Go to **Authentication → Sign In / Providers** and turn on **Allow anonymous sign-ins**. Save.
+3. Find your **Project URL** and **publishable key** (Project Settings → API Keys, or the **Connect** button at the top). Add them to `.env.local` (note the double `>>`, which adds to the file instead of replacing it):
+   ```
+   echo EXPO_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co>> .env.local
+   echo EXPO_PUBLIC_SUPABASE_KEY=YOUR_PUBLISHABLE_KEY>> .env.local
+   ```
+4. Restart with `npx expo start`.
+
 ## Build plan
 
 1. Blank app on the phone ✅
 2. Map where you draw or pick a territory, showing the swim to claim it ✅
-3. Save the shape as a pending challenge (Supabase)
+3. Save the shape as a pending challenge (Supabase) ✅
 4. Colour the territory once a qualifying swim is done
 5. Strava connection for real watch-recorded swims
