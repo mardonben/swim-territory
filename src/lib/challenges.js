@@ -36,6 +36,29 @@ export async function lockInChallenge({ coordinates, boundaryMetres, swimMetres 
   return data;
 }
 
+// Pretend swim for testing: marks the pending challenge as swum. Once Strava is
+// connected, a real watch-recorded swim will do this instead.
+export async function completeChallenge(id) {
+  await ensureSignedIn();
+  const { error } = await supabase
+    .from('challenges')
+    .update({ status: 'completed', completed_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw friendly(error);
+}
+
+// Every area the swimmer has claimed, oldest first so newer claims draw on top.
+export async function getTerritory() {
+  await ensureSignedIn();
+  const { data, error } = await supabase
+    .from('challenges')
+    .select('id, boundary, swim_metres, completed_at')
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: true });
+  if (error) throw friendly(error);
+  return data;
+}
+
 export async function cancelChallenge(id) {
   await ensureSignedIn();
   const { error } = await supabase.from('challenges').update({ status: 'cancelled' }).eq('id', id);
