@@ -136,11 +136,22 @@ ${outlineScript}
     setLine('trace', traced);
   }
 
+  // A tap (not a drawing) on someone's area says whose it is.
+  function onTap(point) {
+    const hit = map.queryRenderedFeatures(point, { layers: ['territory-fill'] })[0];
+    send(hit
+      ? { type: 'areaTapped', nickname: hit.properties.nickname, mine: hit.properties.mine, claimedAt: hit.properties.claimedAt }
+      : { type: 'areaTapped', nickname: null });
+  }
+
   function onTouchEnd(e) {
     if (traced.length === 0) return;
     if (traced.length < 5) {
+      const first = map.project(traced[0]);
+      const last = map.project(traced[traced.length - 1]);
       traced = [];
       setLine('trace', []);
+      if (Math.hypot(first.x - last.x, first.y - last.y) < 15) onTap([last.x, last.y]);
       return;
     }
     finishTrace();
@@ -156,11 +167,16 @@ ${outlineScript}
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
-    // Everyone's territory: [{ geometry, mine }]. Yours is teal, others' red.
+    // Everyone's territory: [{ geometry, mine, nickname, colour, claimedAt }],
+    // each in its holder's colour with their nickname on it.
     showTerritory(areas) {
       map.getSource('territory').setData({
         type: 'FeatureCollection',
-        features: areas.map((a) => ({ type: 'Feature', properties: { mine: a.mine }, geometry: a.geometry })),
+        features: areas.map((a) => ({
+          type: 'Feature',
+          properties: { mine: a.mine, nickname: a.nickname, colour: a.colour, claimedAt: a.claimedAt },
+          geometry: a.geometry,
+        })),
       });
     },
     // The locked-in challenge waiting for its swim, or null to remove it.
@@ -200,15 +216,29 @@ ${outlineScript}
     map.addLayer({
       id: 'territory-fill', type: 'fill', source: 'territory',
       paint: {
-        'fill-color': ['case', ['get', 'mine'], '#00A79D', '#E74C3C'],
+        'fill-color': ['get', 'colour'],
         'fill-opacity': 0.45,
       },
     });
     map.addLayer({
       id: 'territory-outline', type: 'line', source: 'territory',
       paint: {
-        'line-color': ['case', ['get', 'mine'], '#00796B', '#B03A2E'],
-        'line-width': 3,
+        'line-color': ['get', 'colour'],
+        // Your own areas get a bolder edge.
+        'line-width': ['case', ['get', 'mine'], 5, 2.5],
+      },
+    });
+    map.addLayer({
+      id: 'territory-label', type: 'symbol', source: 'territory',
+      layout: {
+        'text-field': ['get', 'nickname'],
+        'text-size': 14,
+        'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+      },
+      paint: {
+        'text-color': '#0B3D5C',
+        'text-halo-color': '#FFFFFF',
+        'text-halo-width': 2,
       },
     });
     map.addLayer({

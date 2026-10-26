@@ -1,4 +1,7 @@
+import { getProfiles } from './profile';
 import { ensureSignedIn, supabase } from './supabase';
+
+const NO_NICKNAME = { nickname: 'Unknown swimmer', colour: '#7F8C8D' };
 
 // Turn database errors into something a swimmer can act on.
 function friendly(error) {
@@ -45,7 +48,8 @@ export async function completeChallenge(id) {
   if (error) throw friendly(error);
 }
 
-// Everyone's territory as it stands now, each marked with whether it's yours.
+// Everyone's territory as it stands now, each with its holder's nickname and
+// colour, and marked with whether it's yours.
 export async function getTerritory() {
   const me = await ensureSignedIn();
   const { data, error } = await supabase
@@ -53,7 +57,13 @@ export async function getTerritory() {
     .select('id, user_id, boundary, claimed_at')
     .order('claimed_at', { ascending: true });
   if (error) throw friendly(error);
-  return data.map((t) => ({ ...t, mine: t.user_id === me.id }));
+  // Still show the map if nicknames can't be loaded, just without them.
+  const profiles = await getProfiles([...new Set(data.map((t) => t.user_id))]).catch(() => ({}));
+  return data.map((t) => ({
+    ...t,
+    ...(profiles[t.user_id] ?? NO_NICKNAME),
+    mine: t.user_id === me.id,
+  }));
 }
 
 export async function cancelChallenge(id) {
