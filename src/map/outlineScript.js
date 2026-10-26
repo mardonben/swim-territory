@@ -8,6 +8,8 @@
 
 export const outlineScript = `
 const M_PER_DEG_LAT = 110540;
+// Thrown when a shape has no land in it. Territory is only ever on land.
+const SEA = 'That area is all sea. Territory has to be on land.';
 
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
 
@@ -107,7 +109,7 @@ function largestOuterRing(feature) {
   return best;
 }
 
-// Cut the sea out of a shape. Narrow water (river mouths, creeks) is bridged
+// Cut the sea out of a shape (throwing SEA if nothing is left). Narrow water (river mouths, creeks) is bridged
 // straight across: the land is grown out by the bridge width then shrunk back,
 // which closes gaps narrower than that but leaves the coastline where it is.
 function trimToLand(ring, water, sizeMetres) {
@@ -122,13 +124,15 @@ function trimToLand(ring, water, sizeMetres) {
   const bridgeKm = clamp(sizeMetres * 0.06, 30, 400) / 1000;
   let land = turf.buffer(shape, bridgeKm * 2, { units: 'kilometers', steps: 4 });
   for (const w of overlapping) {
+    let next;
     try {
-      const next = turf.difference(turf.featureCollection([land, w]));
-      if (!next) return { ring, trimmed: false }; // all water: keep the drawing
-      land = next;
+      next = turf.difference(turf.featureCollection([land, w]));
     } catch (e) {
       // Skip a water piece turf can't handle rather than failing the shape.
+      continue;
     }
+    if (!next) throw new Error(SEA); // nothing but water
+    land = next;
   }
 
   try {
@@ -140,7 +144,8 @@ function trimToLand(ring, water, sizeMetres) {
     // Bridging is a nicety; the sea-trimmed shape is still right.
   }
   const kept = turf.intersect(turf.featureCollection([land, shape]));
-  if (!kept) return { ring, trimmed: false };
+  // Too little land to swim for: just a sliver of beach or a jetty.
+  if (!kept || turf.area(kept) < turf.area(shape) * 0.02) throw new Error(SEA);
   land = kept;
 
   const outer = largestOuterRing(land);
@@ -180,7 +185,14 @@ function circleShape(center, targetPerimeter, water) {
       const a = (k / 72) * 2 * Math.PI;
       ring.push(proj.from([radius * Math.cos(a), radius * Math.sin(a)]));
     }
-    const shape = finish(closeRing(ring), water, radius * 1.8);
+    let shape;
+    try {
+      shape = finish(closeRing(ring), water, radius * 1.8);
+    } catch (e) {
+      // A resized circle can miss the land; keep the best one found so far.
+      if (best) break;
+      throw e;
+    }
     const error = Math.abs(shape.perimeterMetres - targetPerimeter);
     if (!best || error < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
     if (error / targetPerimeter < 0.03 || !shape.trimmed) break;

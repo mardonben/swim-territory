@@ -39,13 +39,13 @@ Each time you want to try the latest version:
 - **🏊 Pick a swim** lets you choose 25 m to 10 km. The app draws a circle from the middle of the map, sized so its boundary matches that swim.
 - **🗑️ Clear** starts over.
 
-Shapes never go out to sea: they're trimmed to the coastline and cut straight across river mouths. The boundary length sets the swim. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
+Shapes never go out to sea: they're trimmed to the coastline and cut straight across river mouths. An area that is all sea is refused. The swim is set by the land outline the app draws (including the stretch along the coast), not by your finger trace. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
 ## Locking in a challenge (needs Supabase, one-time setup)
 
 Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as your pending challenge and shows on the map as an orange dashed area, with a banner saying how far to swim. You can have one pending challenge at a time; tap **Cancel** on the banner to drop it.
 
-The app is already connected to the Sharked Supabase project, and the database is set up with `supabase/001_challenges.sql`, `supabase/002_territory.sql` then `supabase/003_profiles.sql` (all safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
+The app is already connected to the Sharked Supabase project, and the database is set up with `supabase/001_challenges.sql`, `supabase/002_territory.sql`, `supabase/003_profiles.sql` then `supabase/004_area_details.sql` (all safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
 
 ## Claiming territory (test mode)
 
@@ -53,7 +53,7 @@ While a challenge is pending, **✅ I swam it (test)** pretends you've done the 
 
 ## Nicknames and colours
 
-The first time you open the app it asks for a nickname and a map colour. Only these are shown to other swimmers: no real names, emails or phone details. Nicknames are unique (ignoring capitals) and can be 2 to 20 letters, numbers, spaces, - or _. Tap your nickname at the top to change it. Tap any area on the map to see who holds it and since when.
+The first time you open the app it asks for a nickname and a map colour. Only these are shown to other swimmers: no real names, emails or phone details. Nicknames are unique (ignoring capitals) and can be 2 to 20 letters, numbers, spaces, - or _. Tap your nickname at the top to change it. Tap any area on the map to see who holds it, how long they've held it, and the swim that won it.
 
 ## Build plan
 

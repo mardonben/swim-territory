@@ -104,7 +104,8 @@ ${outlineScript}
     try {
       sendShape(shapeFromLoop(loop, waterFeatures(boxAround(loop))));
     } catch (e) {
-      send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
+      setShape([]);
+      send({ type: 'error', message: e.message === SEA ? SEA : 'Could not make a shape from that loop. Try drawing it again.' });
     }
   }
 
@@ -140,8 +141,8 @@ ${outlineScript}
   function onTap(point) {
     const hit = map.queryRenderedFeatures(point, { layers: ['territory-fill'] })[0];
     send(hit
-      ? { type: 'areaTapped', nickname: hit.properties.nickname, mine: hit.properties.mine, claimedAt: hit.properties.claimedAt }
-      : { type: 'areaTapped', nickname: null });
+      ? { type: 'areaTapped', id: hit.properties.id }
+      : { type: 'areaTapped', id: null });
   }
 
   function onTouchEnd(e) {
@@ -167,14 +168,14 @@ ${outlineScript}
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
-    // Everyone's territory: [{ geometry, mine, nickname, colour, claimedAt }],
+    // Everyone's territory: [{ id, geometry, mine, nickname, colour }],
     // each in its holder's colour with their nickname on it.
     showTerritory(areas) {
       map.getSource('territory').setData({
         type: 'FeatureCollection',
         features: areas.map((a) => ({
           type: 'Feature',
-          properties: { mine: a.mine, nickname: a.nickname, colour: a.colour, claimedAt: a.claimedAt },
+          properties: { id: a.id, mine: a.mine, nickname: a.nickname, colour: a.colour },
           geometry: a.geometry,
         })),
       });
@@ -201,7 +202,7 @@ ${outlineScript}
         try {
           sendShape(circleShape(center, targetPerimeterMetres, waterFeatures()), true);
         } catch (e) {
-          send({ type: 'error', message: 'Could not find an area to suggest here.' });
+          send({ type: 'error', message: e.message === SEA ? SEA + ' Move the map inland and pick again.' : 'Could not find an area to suggest here.' });
         }
       });
     },
