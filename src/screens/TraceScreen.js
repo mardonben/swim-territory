@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
@@ -8,18 +8,21 @@ const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
+const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
+const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
 
 function formatDistance(metres) {
   if (metres < 1000) return `${metres} m`;
-  return `${(metres / 1000).toFixed(2)} km`;
+  return `${(metres / 1000).toFixed(2).replace(/\.?0+$/, '')} km`;
 }
 
 export default function TraceScreen() {
   const webview = useRef(null);
   const [mapReady, setMapReady] = useState(false);
-  const [drawing, setDrawing] = useState(false);
   const [shape, setShape] = useState(null);
   const [status, setStatus] = useState('Loading map…');
+  const [target, setTarget] = useState(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -29,19 +32,25 @@ export default function TraceScreen() {
     webview.current?.injectJavaScript(`${js}; true;`);
   }
 
+  async function goToMe() {
+    const { status: permission } = await Location.requestForegroundPermissionsAsync();
+    if (permission !== 'granted') {
+      setStatus('Location is off for Expo Go. Turn it on in your phone settings to use 📍.');
+      return;
+    }
+    const position =
+      (await Location.getLastKnownPositionAsync()) ??
+      (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
+    if (position) {
+      const { longitude, latitude } = position.coords;
+      run(`window.swimMap.showMe(${longitude}, ${latitude})`);
+      run(`window.swimMap.flyTo(${longitude}, ${latitude})`);
+    }
+  }
+
   // Once the map is up, jump to where the phone is.
   useEffect(() => {
-    if (!mapReady) return;
-    (async () => {
-      const { status: permission } = await Location.requestForegroundPermissionsAsync();
-      if (permission !== 'granted') return;
-      const position =
-        (await Location.getLastKnownPositionAsync()) ??
-        (await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }));
-      if (position) {
-        run(`window.swimMap.flyTo(${position.coords.longitude}, ${position.coords.latitude})`);
-      }
-    })().catch(() => {});
+    if (mapReady) goToMe().catch(() => {});
   }, [mapReady]);
 
   function onMessage(event) {
@@ -49,15 +58,18 @@ export default function TraceScreen() {
     switch (message.type) {
       case 'ready':
         setMapReady(true);
-        setStatus('Tap ✏️ Draw, then trace a loop with your finger.');
+        setStatus(DRAW_HINT);
         break;
       case 'shape':
         setShape(message);
         setStatus(
           message.fromMap
-            ? 'Outline follows the roads, paths and fields inside your loop. Draw again to replace it.'
-            : 'No roads or paths found inside, so this is your hand-drawn shape.'
+            ? 'Corners and edges follow the roads where they can. Draw again to replace it.'
+            : 'No roads nearby, so your shape is kept as drawn.'
         );
+        break;
+      case 'suggestions':
+        setStatus('Tap a green area to pick it, or draw your own.');
         break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
@@ -65,16 +77,18 @@ export default function TraceScreen() {
     }
   }
 
-  function toggleDrawing() {
-    const next = !drawing;
-    setDrawing(next);
-    run(`window.swimMap.setDrawMode(${next})`);
+  function chooseTarget(metres) {
+    setPickerOpen(false);
+    setTarget(metres);
+    setShape(null);
+    setStatus('Finding areas to claim…');
+    run(`window.swimMap.suggest(${metres * OUTLINE_PER_SWIM})`);
   }
 
   function clear() {
     setShape(null);
     run('window.swimMap.clear()');
-    setStatus(drawing ? 'Trace a loop with your finger.' : 'Tap ✏️ Draw, then trace a loop with your finger.');
+    setStatus(DRAW_HINT);
   }
 
   if (!MAPBOX_TOKEN) {
@@ -92,17 +106,22 @@ export default function TraceScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>🦈 Swim Territory</Text>
+        <Text style={styles.title}>🦈 Sharked</Text>
       </View>
 
-      <WebView
-        ref={webview}
-        style={styles.map}
-        originWhitelist={['*']}
-        source={{ html, baseUrl: 'https://localhost' }}
-        onMessage={onMessage}
-        javaScriptEnabled
-      />
+      <View style={styles.mapWrap}>
+        <WebView
+          ref={webview}
+          style={styles.map}
+          originWhitelist={['*']}
+          source={{ html, baseUrl: 'https://localhost' }}
+          onMessage={onMessage}
+          javaScriptEnabled
+        />
+        <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
+          <Text style={styles.locateText}>📍</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.panel}>
         {shape ? (
@@ -117,18 +136,35 @@ export default function TraceScreen() {
         ) : null}
         <Text style={styles.status}>{status}</Text>
         <View style={styles.buttons}>
-          <Pressable
-            style={[styles.button, drawing && styles.buttonActive]}
-            onPress={toggleDrawing}
-            disabled={!mapReady}
-          >
-            <Text style={styles.buttonText}>{drawing ? '✋ Move map' : '✏️ Draw'}</Text>
+          <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
+            <Text style={styles.buttonText}>
+              🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
+            </Text>
           </Pressable>
           <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
             <Text style={styles.buttonText}>🗑️ Clear</Text>
           </Pressable>
         </View>
       </View>
+
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>How far do you want to swim?</Text>
+            <FlatList
+              data={SWIM_DISTANCES}
+              keyExtractor={(d) => String(d)}
+              renderItem={({ item }) => (
+                <Pressable style={styles.option} onPress={() => chooseTarget(item)}>
+                  <Text style={[styles.optionText, item === target && styles.optionChosen]}>
+                    {formatDistance(item)}
+                  </Text>
+                </Pressable>
+              )}
+            />
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -159,8 +195,26 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textAlign: 'center',
   },
+  mapWrap: {
+    flex: 1,
+  },
   map: {
     flex: 1,
+  },
+  locate: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 4,
+  },
+  locateText: {
+    fontSize: 22,
   },
   panel: {
     padding: 16,
@@ -199,12 +253,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 24,
   },
-  buttonActive: {
-    backgroundColor: '#FF6B35',
-  },
   buttonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '60%',
+    paddingTop: 16,
+    paddingBottom: 24,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 8,
+    color: '#0B3D5C',
+  },
+  option: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  optionText: {
+    fontSize: 18,
+    color: '#0B3D5C',
+  },
+  optionChosen: {
+    fontWeight: 'bold',
+    color: '#FF6B35',
   },
 });

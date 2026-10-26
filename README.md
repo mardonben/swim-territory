@@ -1,6 +1,6 @@
-# Swim Territory
+# Sharked
 
-Claim real-world map territory by completing swims. Working name; the shark-themed name is still to be decided.
+Claim real-world map territory by completing swims.
 
 ## Running the app on your phone (Windows)
 
@@ -31,18 +31,20 @@ Each time you want to try the latest version:
 2. A QR code appears. Open **Expo Go** on your Android phone and scan it.
 3. Your phone and PC need to be on the same Wi-Fi. If it won't connect, stop it with Ctrl+C and run `npx expo start --tunnel` instead.
 
-## Drawing a shape
+## Using the map
 
-1. Allow location when asked, and the map jumps to where you are.
-2. Pinch and drag to find your area, then tap **✏️ Draw**.
-3. Trace a loop with one finger and lift it. The app finds the roads, paths and field edges inside your loop and wraps a blocky outline around them, joining road ends with straight edges where there's no road.
-4. The number shown is the swim that claims it. Every 1 km you swim claims 4 km of outline, so a 4 km outline is a 1 km swim.
-5. Tap **✋ Move map** to pan again, or **🗑️ Clear** to start over.
+- **Move and zoom** with two fingers. One finger never moves the map.
+- **Draw** a loop with one finger and lift it. The app keeps the shape you drew (draw a rectangle, get a rectangle), pulls the corners onto nearby road junctions, and runs edges along roads where a road sits right alongside. Otherwise edges stay straight, bridging gaps between roads.
+- **📍** (bottom right of the map) jumps back to where you are.
+- **🏊 Pick a swim** lets you choose 25 m to 10 km. The map zooms out and shows dashed green areas nearby sized for that swim. Tap one to pick it.
+- **🗑️ Clear** starts over.
+
+The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
 ## Build plan
 
 1. Blank app on the phone ✅
-2. Map where you trace a shape, outlined from the roads inside it, showing the swim to claim it ✅
+2. Map where you draw or pick a shape that follows the roads, showing the swim to claim it ✅
 3. Save the shape as a pending challenge (Supabase)
 4. Colour the territory once a qualifying swim is done
 5. Strava connection for real watch-recorded swims

@@ -5,7 +5,6 @@
 import { outlineScript } from './outlineScript';
 
 const MAPBOX_GL_VERSION = '3.9.4';
-const TURF_VERSION = '7.2.0';
 
 export function buildMapHtml({ token, center }) {
   return `<!doctype html>
@@ -15,10 +14,11 @@ export function buildMapHtml({ token, center }) {
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <link href="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.css" rel="stylesheet" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@turf/turf@${TURF_VERSION}/turf.min.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; }
   body { background: #0B3D5C; }
+  /* Hide the "use two fingers" hint: one finger draws here on purpose. */
+  .mapboxgl-touch-pan-blocker, .mapboxgl-scroll-zoom-blocker { display: none !important; }
 </style>
 </head>
 <body>
@@ -45,12 +45,22 @@ export function buildMapHtml({ token, center }) {
     center: ${JSON.stringify(center)},
     zoom: 15,
     attributionControl: true,
+    // Two fingers move and zoom the map, which leaves one finger free to draw.
+    cooperativeGestures: true,
+    doubleClickZoom: false,
+    dragRotate: false,
+    pitchWithRotate: false,
   });
+  map.touchZoomRotate.disableRotation();
 
-  let drawMode = false;
   let traced = [];
+  let suggestions = [];
 
 ${outlineScript}
+
+  function emptyFeature() {
+    return { type: 'FeatureCollection', features: [] };
+  }
 
   function setLine(sourceId, coords) {
     map.getSource(sourceId).setData({
@@ -66,98 +76,157 @@ ${outlineScript}
     });
   }
 
-  function emptyFeature() {
-    return { type: 'FeatureCollection', features: [] };
+  function setSuggestions(list) {
+    suggestions = list;
+    map.getSource('suggestions').setData({
+      type: 'FeatureCollection',
+      features: list.map((s, i) => ({
+        type: 'Feature',
+        id: i,
+        properties: { index: i },
+        geometry: { type: 'Polygon', coordinates: [s.coords] },
+      })),
+    });
   }
 
-  // Everything drawn on screen under the loop that could be a territory edge.
-  function edgeGeometries(loop) {
+  // Everything drawn on screen (or in a box of it) that could be a territory edge.
+  function edgeFeatures(box) {
+    return map.queryRenderedFeatures(box)
+      .filter((f) => EDGE_SOURCE_LAYERS.includes(f.sourceLayer))
+      .filter((f) => !SKIP_CLASSES.includes(f.properties && f.properties.class));
+  }
+
+  function boxAround(loop) {
     const pixels = loop.map((c) => map.project(c));
     const xs = pixels.map((p) => p.x);
     const ys = pixels.map((p) => p.y);
-    const pad = 40;
-    const box = [
+    const pad = 60;
+    return [
       [Math.min(...xs) - pad, Math.min(...ys) - pad],
       [Math.max(...xs) + pad, Math.max(...ys) + pad],
     ];
-    return map.queryRenderedFeatures(box)
-      .filter((f) => EDGE_SOURCE_LAYERS.includes(f.sourceLayer))
-      .filter((f) => !SKIP_CLASSES.includes(f.properties && f.properties.class))
-      .map((f) => f.geometry);
+  }
+
+  function sendShape(shape) {
+    setShape(shape.coords);
+    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, fromMap: shape.fromMap, coordinates: shape.coords });
   }
 
   function finishTrace() {
-    if (traced.length < 5) {
-      traced = [];
-      setLine('trace', []);
-      return;
-    }
     const loop = traced.concat([traced[0]]);
     traced = [];
     setLine('trace', []);
     try {
-      const outline = buildOutline(loop, edgeGeometries(loop));
-      setShape(outline.coords);
-      send({ type: 'shape', perimeterMetres: outline.perimeterMetres, fromMap: outline.fromMap, coordinates: outline.coords });
+      setSuggestions([]);
+      sendShape(shapeFromLoop(loop, edgeFeatures(boxAround(loop))));
     } catch (e) {
       send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
     }
   }
 
-  function pointFromEvent(e) {
-    const touch = e.touches ? e.touches[0] : e;
+  // A quick tap on a suggested area picks it.
+  function handleTap(point) {
+    const hit = map.queryRenderedFeatures(point, { layers: ['suggestion-fill'] })[0];
+    if (!hit) return;
+    const chosen = suggestions[hit.properties.index];
+    setSuggestions([]);
+    sendShape(chosen);
+  }
+
+  function screenPoint(touch) {
     const rect = map.getCanvasContainer().getBoundingClientRect();
-    const lngLat = map.unproject([touch.clientX - rect.left, touch.clientY - rect.top]);
-    return [lngLat.lng, lngLat.lat];
+    return [touch.clientX - rect.left, touch.clientY - rect.top];
   }
 
-  function onStart(e) {
-    if (!drawMode) return;
+  function lngLatAt(point) {
+    const ll = map.unproject(point);
+    return [ll.lng, ll.lat];
+  }
+
+  let tapStart = null;
+
+  function onTouchStart(e) {
+    if (e.touches.length > 1) {
+      // A second finger means move/zoom, so drop whatever was being drawn.
+      traced = [];
+      tapStart = null;
+      setLine('trace', []);
+      return;
+    }
     e.preventDefault();
-    traced = [pointFromEvent(e)];
-    setShape([]);
+    const p = screenPoint(e.touches[0]);
+    tapStart = p;
+    traced = [lngLatAt(p)];
+  }
+
+  function onTouchMove(e) {
+    if (e.touches.length > 1 || traced.length === 0) return;
+    e.preventDefault();
+    traced.push(lngLatAt(screenPoint(e.touches[0])));
     setLine('trace', traced);
   }
 
-  function onMove(e) {
-    if (!drawMode || traced.length === 0) return;
-    e.preventDefault();
-    traced.push(pointFromEvent(e));
-    setLine('trace', traced);
-  }
-
-  function onEnd() {
-    if (!drawMode || traced.length === 0) return;
+  function onTouchEnd(e) {
+    if (traced.length === 0) return;
+    if (traced.length < 5) {
+      const p = tapStart;
+      traced = [];
+      setLine('trace', []);
+      if (p) handleTap(p);
+      return;
+    }
     finishTrace();
   }
 
   // Commands the app sends in.
   window.swimMap = {
-    setDrawMode(on) {
-      drawMode = on;
-      if (on) {
-        map.dragPan.disable();
-        map.touchZoomRotate.disable();
-        map.doubleClickZoom.disable();
-      } else {
-        map.dragPan.enable();
-        map.touchZoomRotate.enable();
-        map.doubleClickZoom.enable();
-      }
-    },
     clear() {
       traced = [];
       setLine('trace', []);
       setShape([]);
+      setSuggestions([]);
     },
     flyTo(lng, lat) {
-      map.flyTo({ center: [lng, lat], zoom: 15 });
+      map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
+    },
+    showMe(lng, lat) {
+      map.getSource('me').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] } });
+    },
+    suggest(targetPerimeterMetres) {
+      setShape([]);
+      setSuggestions([]);
+      const center = map.getCenter().toArray();
+      // Zoom so all the suggested areas fit on screen, then read the roads there.
+      const reach = (targetPerimeterMetres / 4) * 2.2;
+      const dLat = reach / 110540;
+      const dLng = reach / (111320 * Math.cos((center[1] * Math.PI) / 180));
+      map.fitBounds([[center[0] - dLng, center[1] - dLat], [center[0] + dLng, center[1] + dLat]], { duration: 0, padding: 10 });
+      map.once('idle', () => {
+        try {
+          const list = suggestShapes(center, targetPerimeterMetres, edgeFeatures());
+          setSuggestions(list);
+          send({ type: 'suggestions', count: list.length });
+        } catch (e) {
+          send({ type: 'error', message: 'Could not find areas to suggest here.' });
+        }
+      });
     },
   };
 
   map.on('load', () => {
     map.addSource('trace', { type: 'geojson', data: emptyFeature() });
     map.addSource('shape', { type: 'geojson', data: emptyFeature() });
+    map.addSource('suggestions', { type: 'geojson', data: emptyFeature() });
+    map.addSource('me', { type: 'geojson', data: emptyFeature() });
+    map.addLayer({
+      id: 'suggestion-fill', type: 'fill', source: 'suggestions',
+      paint: { 'fill-color': '#2ECC71', 'fill-opacity': 0.18 },
+    });
+    map.addLayer({
+      id: 'suggestion-outline', type: 'line', source: 'suggestions',
+      layout: { 'line-join': 'miter' },
+      paint: { 'line-color': '#1E8449', 'line-width': 3, 'line-dasharray': [2, 1.5] },
+    });
     map.addLayer({
       id: 'shape-fill', type: 'fill', source: 'shape',
       paint: { 'fill-color': '#1E90FF', 'fill-opacity': 0.3 },
@@ -171,14 +240,18 @@ ${outlineScript}
       id: 'trace-line', type: 'line', source: 'trace',
       paint: { 'line-color': '#FF6B35', 'line-width': 3, 'line-dasharray': [2, 1] },
     });
+    map.addLayer({
+      id: 'me-dot', type: 'circle', source: 'me',
+      paint: {
+        'circle-radius': 8, 'circle-color': '#1E90FF',
+        'circle-stroke-width': 3, 'circle-stroke-color': '#FFFFFF',
+      },
+    });
 
     const container = map.getCanvasContainer();
-    container.addEventListener('touchstart', onStart, { passive: false });
-    container.addEventListener('touchmove', onMove, { passive: false });
-    container.addEventListener('touchend', onEnd);
-    container.addEventListener('mousedown', onStart);
-    container.addEventListener('mousemove', (e) => { if (e.buttons === 1) onMove(e); });
-    container.addEventListener('mouseup', onEnd);
+    container.addEventListener('touchstart', onTouchStart, { passive: false });
+    container.addEventListener('touchmove', onTouchMove, { passive: false });
+    container.addEventListener('touchend', onTouchEnd);
 
     send({ type: 'ready' });
   });
