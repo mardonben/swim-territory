@@ -1,11 +1,10 @@
 // Plain JavaScript that runs inside the map page (see mapHtml.js), kept as text
 // because the app itself can't hand real functions to the web page.
 //
-// shapeFromLoop turns a finger-drawn loop into a tidy territory. It keeps the
-// overall shape you drew (draw a rectangle, get a rectangle), pulls each corner
-// onto a nearby road junction, and lets an edge follow a road only when that
-// road runs right alongside it. Otherwise the edge stays straight, bridging the
-// gap, so shapes never duck in and out of side streets.
+// Territory shapes ignore roads. A drawn loop is tidied into the shape you
+// meant (draw a rectangle, get a rectangle) with rounded corners; the swim
+// picker makes a circle. Either way the shape is then trimmed to the land, so
+// it never runs out to sea, and bridged straight across river mouths.
 
 export const outlineScript = `
 const M_PER_DEG_LAT = 110540;
@@ -22,12 +21,6 @@ function projector(origin) {
 }
 
 function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
-
-function pathLength(pts) {
-  let total = 0;
-  for (let i = 1; i < pts.length; i++) total += dist(pts[i - 1], pts[i]);
-  return total;
-}
 
 function polygonArea(pts) {
   let a = 0;
@@ -70,88 +63,7 @@ function simplifyClosed(pts, tolerance) {
   return a.slice(0, -1).concat(b.slice(0, -1));
 }
 
-// Road, path and field-edge points, bucketed on a grid for quick nearest lookups.
-function roadIndex(features, proj, spacing, cellSize) {
-  const points = [];
-  const junctions = [];
-  const owners = new Map();
-  const seenFeatures = new Set();
-
-  function addLine(coords, owner) {
-    for (let i = 0; i < coords.length; i++) {
-      const key = coords[i][0].toFixed(6) + ',' + coords[i][1].toFixed(6);
-      if (!owners.has(key)) owners.set(key, new Set());
-      owners.get(key).add(owner);
-      if (i === 0) continue;
-      const a = proj.to(coords[i - 1]);
-      const b = proj.to(coords[i]);
-      const steps = Math.max(1, Math.ceil(dist(a, b) / spacing));
-      for (let s = 0; s < steps; s++) {
-        const t = s / steps;
-        points.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
-      }
-      points.push(b);
-    }
-  }
-
-  for (const f of features) {
-    const g = f.geometry;
-    // The same road comes back once per map layer that draws it; count it once.
-    const signature = JSON.stringify(g.coordinates);
-    if (seenFeatures.has(signature)) continue;
-    seenFeatures.add(signature);
-    const owner = f.sourceLayer + ':' + (f.id !== undefined ? f.id : signature.slice(0, 80));
-    const isRoad = f.sourceLayer === 'road';
-    const lines =
-      g.type === 'LineString' ? [g.coordinates]
-      : g.type === 'MultiLineString' || g.type === 'Polygon' ? g.coordinates
-      : g.type === 'MultiPolygon' ? g.coordinates.flat()
-      : [];
-    lines.forEach((line) => addLine(line, isRoad ? owner : 'land'));
-  }
-
-  // Where two different roads share a point, that's a junction.
-  for (const [key, set] of owners) {
-    const roads = [...set].filter((o) => o !== 'land');
-    if (roads.length >= 2) {
-      const [lng, lat] = key.split(',').map(Number);
-      junctions.push(proj.to([lng, lat]));
-    }
-  }
-
-  function grid(list) {
-    const cells = new Map();
-    for (const p of list) {
-      const k = Math.floor(p[0] / cellSize) + ',' + Math.floor(p[1] / cellSize);
-      if (!cells.has(k)) cells.set(k, []);
-      cells.get(k).push(p);
-    }
-    return function nearest(p, radius) {
-      const reach = Math.ceil(radius / cellSize);
-      const cx = Math.floor(p[0] / cellSize);
-      const cy = Math.floor(p[1] / cellSize);
-      let best = null;
-      let bestD = radius;
-      for (let dx = -reach; dx <= reach; dx++) {
-        for (let dy = -reach; dy <= reach; dy++) {
-          const bucket = cells.get(cx + dx + ',' + (cy + dy));
-          if (!bucket) continue;
-          for (const q of bucket) {
-            const d = dist(p, q);
-            if (d < bestD) { bestD = d; best = q; }
-          }
-        }
-      }
-      return best;
-    };
-  }
-
-  return { nearestPoint: grid(points), nearestJunction: grid(junctions), count: points.length };
-}
-
-// loop: [lng, lat] points (closed or not). features: map features near it.
-// Softens every corner with a curve. Long straight edges keep their length,
-// short wiggles get smoothed away.
+// Softens every corner with a curve.
 function roundCorners(pts, radius) {
   const n = pts.length;
   if (n < 3) return pts.slice();
@@ -166,7 +78,6 @@ function roundCorners(pts, radius) {
     if (cut < 0.5) { out.push(p); continue; }
     const a = [p[0] + ((prev[0] - p[0]) * cut) / lenIn, p[1] + ((prev[1] - p[1]) * cut) / lenIn];
     const b = [p[0] + ((next[0] - p[0]) * cut) / lenOut, p[1] + ((next[1] - p[1]) * cut) / lenOut];
-    // Curve from a to b, bending towards the corner.
     for (let s = 0; s <= 6; s++) {
       const t = s / 6;
       out.push([
@@ -178,91 +89,102 @@ function roundCorners(pts, radius) {
   return out;
 }
 
-// options.cornerDetail: smaller keeps more corners (rounder shapes).
-function shapeFromLoop(loop, features, prepared, options) {
-  const cornerDetail = (options && options.cornerDetail) || 0.08;
-  const pts = loop.slice();
-  if (dist(pts[0], pts[pts.length - 1]) === 0) pts.pop();
-  const origin = pts[0];
-  const proj = prepared ? prepared.proj : projector(origin);
-  const xy = pts.map(proj.to);
-  const size = Math.sqrt(polygonArea(xy)) || pathLength(xy) / 4;
-
-  const roads = prepared ? prepared.roads
-    : roadIndex(features, proj, clamp(size / 40, 3, 40), clamp(size / 5, 10, 80));
-
-  // 1. The shape you meant: a handful of corners.
-  let corners = simplifyClosed(xy, cornerDetail * size);
-  if (corners.length < 3) corners = simplifyClosed(xy, 0.03 * size);
-  if (corners.length < 3) corners = xy.slice(0, 3);
-
-  // 2. Pull each corner onto a junction, or failing that a road, if one is close.
-  const snapR = clamp(0.15 * size, 8, 80);
-  let onRoads = 0;
-  corners = corners.map((c) => {
-    const j = roads.nearestJunction(c, snapR);
-    if (j) { onRoads++; return j; }
-    const r = roads.nearestPoint(c, snapR * 0.6);
-    if (r) { onRoads++; return r; }
-    return c;
-  }).filter((c, i, all) => i === 0 || dist(c, all[i - 1]) > 1);
-  if (corners.length > 3 && dist(corners[0], corners[corners.length - 1]) <= 1) corners.pop();
-
-  // 3. Each edge follows a road only if one runs right alongside it.
-  const edgeR = clamp(0.06 * size, 5, 30);
-  const step = clamp(size / 30, 4, 25);
-  const outline = [];
-  for (let i = 0; i < corners.length; i++) {
-    const a = corners[i];
-    const b = corners[(i + 1) % corners.length];
-    const n = Math.max(2, Math.round(dist(a, b) / step));
-    const samples = [];
-    let hits = 0;
-    for (let s = 1; s < n; s++) {
-      const t = s / n;
-      const p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-      const r = roads.nearestPoint(p, edgeR);
-      if (r) hits++;
-      samples.push(r || p);
-    }
-    const roadPath = simplifyOpen([a].concat(samples, [b]), edgeR / 3);
-    // A road that zig-zags (a staircase of side streets) doesn't count.
-    const followsRoad = samples.length > 0 && hits / samples.length >= 0.7 &&
-      pathLength(roadPath) <= dist(a, b) * 1.1;
-    const edge = followsRoad ? roadPath : [a, b];
-    outline.push(...edge.slice(0, -1));
-  }
-  const rounded = roundCorners(outline, clamp(0.1 * size, 5, 120));
-  rounded.push(rounded[0]);
-
-  return {
-    coords: rounded.map(proj.from),
-    perimeterMetres: Math.round(pathLength(rounded)),
-    fromMap: roads.count > 0 && onRoads > 0,
-  };
+function closeRing(coords) {
+  return coords.concat([coords[0]]);
 }
 
-// One roughly round area centred on you, resized until its outline matches
-// the target length.
-function suggestShape(center, targetPerimeter, features) {
-  const proj = projector(center);
-  const radius = targetPerimeter / (2 * Math.PI);
-  const size = radius * 1.8;
-  const roads = roadIndex(features, proj, clamp(size / 40, 3, 40), clamp(size / 5, 10, 80));
-  const prepared = { proj, roads };
-  // Snapping to junctions makes size jump in steps, so try a spread of sizes
-  // and keep the closest match.
+// The biggest piece of a (multi)polygon, as its outer ring only. Lakes inside
+// a territory still count as territory.
+function largestOuterRing(feature) {
+  const g = feature.geometry;
+  const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
   let best = null;
-  for (let attempt = 0; attempt < 16; attempt++) {
-    const r = radius * (0.7 + attempt * 0.05);
-    const circle = [];
-    for (let k = 0; k < 24; k++) {
-      const a = (k / 24) * 2 * Math.PI;
-      circle.push(proj.from([r * Math.cos(a), r * Math.sin(a)]));
+  let bestArea = -1;
+  for (const poly of polys) {
+    const area = turf.area(turf.polygon([poly[0]]));
+    if (area > bestArea) { bestArea = area; best = poly[0]; }
+  }
+  return best;
+}
+
+// Cut the sea out of a shape. Narrow water (river mouths, creeks) is bridged
+// straight across: the land is grown out by the bridge width then shrunk back,
+// which closes gaps narrower than that but leaves the coastline where it is.
+function trimToLand(ring, water, sizeMetres) {
+  const shape = turf.polygon([ring]);
+  const overlapping = water.filter((w) => {
+    try { return turf.booleanIntersects(shape, w); } catch (e) { return false; }
+  });
+  if (overlapping.length === 0) return { ring, trimmed: false };
+
+  // Work on a slightly bigger area than the shape, so bridging behaves the same
+  // right up to the shape's edge, then trim back to the shape at the end.
+  const bridgeKm = clamp(sizeMetres * 0.06, 30, 400) / 1000;
+  let land = turf.buffer(shape, bridgeKm * 2, { units: 'kilometers', steps: 4 });
+  for (const w of overlapping) {
+    try {
+      const next = turf.difference(turf.featureCollection([land, w]));
+      if (!next) return { ring, trimmed: false }; // all water: keep the drawing
+      land = next;
+    } catch (e) {
+      // Skip a water piece turf can't handle rather than failing the shape.
     }
-    const shape = shapeFromLoop(circle, null, prepared, { cornerDetail: 0.025 });
-    if (!best || Math.abs(shape.perimeterMetres - targetPerimeter) < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
-    if (Math.abs(shape.perimeterMetres - targetPerimeter) / targetPerimeter < 0.03) break;
+  }
+
+  try {
+    const grown = turf.buffer(land, bridgeKm, { units: 'kilometers', steps: 6 });
+    const closed = turf.buffer(grown, -bridgeKm, { units: 'kilometers', steps: 6 });
+    // Never reach outside the shape you drew.
+    if (closed) land = closed;
+  } catch (e) {
+    // Bridging is a nicety; the sea-trimmed shape is still right.
+  }
+  const kept = turf.intersect(turf.featureCollection([land, shape]));
+  if (!kept) return { ring, trimmed: false };
+  land = kept;
+
+  const outer = largestOuterRing(land);
+  return outer ? { ring: outer, trimmed: true } : { ring, trimmed: false };
+}
+
+function finish(ring, water, sizeMetres) {
+  const result = trimToLand(ring, water, sizeMetres);
+  const perimeterKm = turf.length(turf.lineString(result.ring), { units: 'kilometers' });
+  return { coords: result.ring, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
+}
+
+// loop: finger-drawn [lng, lat] points. water: water polygons near it.
+function shapeFromLoop(loop, water) {
+  const pts = loop.slice();
+  if (dist(pts[0], pts[pts.length - 1]) === 0) pts.pop();
+  const proj = projector(pts[0]);
+  const xy = pts.map(proj.to);
+  const size = Math.sqrt(polygonArea(xy)) || 50;
+
+  let corners = simplifyClosed(xy, 0.08 * size);
+  if (corners.length < 3) corners = simplifyClosed(xy, 0.03 * size);
+  if (corners.length < 3) corners = xy.slice(0, 3);
+  const rounded = roundCorners(corners, clamp(0.1 * size, 5, 150));
+  return finish(closeRing(rounded.map(proj.from)), water, size);
+}
+
+// A circle round the centre whose land boundary matches the target length.
+function circleShape(center, targetPerimeter, water) {
+  const proj = projector(center);
+  let radius = targetPerimeter / (2 * Math.PI);
+  let best = null;
+  // Trimming off the sea changes the boundary length, so adjust and retry.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const ring = [];
+    for (let k = 0; k < 72; k++) {
+      const a = (k / 72) * 2 * Math.PI;
+      ring.push(proj.from([radius * Math.cos(a), radius * Math.sin(a)]));
+    }
+    const shape = finish(closeRing(ring), water, radius * 1.8);
+    const error = Math.abs(shape.perimeterMetres - targetPerimeter);
+    if (!best || error < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
+    if (error / targetPerimeter < 0.03 || !shape.trimmed) break;
+    radius *= Math.pow(targetPerimeter / shape.perimeterMetres, 0.8);
   }
   return best;
 }

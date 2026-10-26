@@ -5,6 +5,7 @@
 import { outlineScript } from './outlineScript';
 
 const MAPBOX_GL_VERSION = '3.9.4';
+const TURF_VERSION = '7.2.0';
 
 export function buildMapHtml({ token, center }) {
   return `<!doctype html>
@@ -14,6 +15,7 @@ export function buildMapHtml({ token, center }) {
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <link href="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.css" rel="stylesheet" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@${TURF_VERSION}/turf.min.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; }
   body { background: #0B3D5C; }
@@ -25,10 +27,6 @@ export function buildMapHtml({ token, center }) {
 <div id="map"></div>
 <script>
   const TOKEN = ${JSON.stringify(token)};
-  // Map layers whose lines can form a territory edge: roads and paths, and the
-  // edges of fields, parks and other land.
-  const EDGE_SOURCE_LAYERS = ['road', 'landuse', 'landuse_overlay'];
-  const SKIP_CLASSES = ['ferry', 'aerialway'];
 
   function send(message) {
     if (window.ReactNativeWebView) {
@@ -75,11 +73,12 @@ ${outlineScript}
     });
   }
 
-  // Everything drawn on screen (or in a box of it) that could be a territory edge.
-  function edgeFeatures(box) {
+  // Sea, rivers and lakes drawn on screen (or in a box of it), as polygons.
+  function waterFeatures(box) {
     return map.queryRenderedFeatures(box)
-      .filter((f) => EDGE_SOURCE_LAYERS.includes(f.sourceLayer))
-      .filter((f) => !SKIP_CLASSES.includes(f.properties && f.properties.class));
+      .filter((f) => f.sourceLayer === 'water')
+      .filter((f) => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')
+      .map((f) => ({ type: 'Feature', properties: {}, geometry: f.geometry }));
   }
 
   function boxAround(loop) {
@@ -95,7 +94,7 @@ ${outlineScript}
 
   function sendShape(shape, suggested) {
     setShape(shape.coords);
-    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, fromMap: shape.fromMap, suggested: !!suggested, coordinates: shape.coords });
+    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, coordinates: shape.coords });
   }
 
   function finishTrace() {
@@ -103,7 +102,7 @@ ${outlineScript}
     traced = [];
     setLine('trace', []);
     try {
-      sendShape(shapeFromLoop(loop, edgeFeatures(boxAround(loop))));
+      sendShape(shapeFromLoop(loop, waterFeatures(boxAround(loop))));
     } catch (e) {
       send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
     }
@@ -164,13 +163,13 @@ ${outlineScript}
       setShape([]);
       const center = map.getCenter().toArray();
       // Zoom so the area fits on screen, then read the roads there.
-      const reach = (targetPerimeterMetres / (2 * Math.PI)) * 1.8;
+      const reach = (targetPerimeterMetres / (2 * Math.PI)) * 1.2;
       const dLat = reach / 110540;
       const dLng = reach / (111320 * Math.cos((center[1] * Math.PI) / 180));
       map.fitBounds([[center[0] - dLng, center[1] - dLat], [center[0] + dLng, center[1] + dLat]], { duration: 0, padding: 10 });
       map.once('idle', () => {
         try {
-          sendShape(suggestShape(center, targetPerimeterMetres, edgeFeatures()), true);
+          sendShape(circleShape(center, targetPerimeterMetres, waterFeatures()), true);
         } catch (e) {
           send({ type: 'error', message: 'Could not find an area to suggest here.' });
         }

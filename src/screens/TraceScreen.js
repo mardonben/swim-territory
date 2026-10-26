@@ -63,11 +63,10 @@ export default function TraceScreen() {
       case 'shape':
         setShape(message);
         setStatus(
-          message.suggested
-            ? 'Here’s an area sized for that swim, around the middle of the map. Draw your own to replace it.'
-            : message.fromMap
-              ? 'Corners and edges follow the roads where they can. Draw again to replace it.'
-              : 'No roads nearby, so your shape is kept as drawn.'
+          (message.suggested
+            ? 'A circle sized for that swim, from the middle of the map.'
+            : 'Your territory. Draw again to replace it.') +
+            (message.trimmed ? ' Trimmed to the coastline.' : '')
         );
         break;
       case 'error':

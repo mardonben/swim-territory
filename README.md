@@ -34,17 +34,17 @@ Each time you want to try the latest version:
 ## Using the map
 
 - **Move and zoom** with two fingers. One finger never moves the map.
-- **Draw** a loop with one finger and lift it. The app keeps the shape you drew (draw a rectangle, get a rectangle), pulls the corners onto nearby road junctions, and runs edges along roads where a road sits right alongside. Otherwise edges stay straight, bridging gaps between roads. Corners are rounded off.
+- **Draw** a loop with one finger and lift it. The app tidies it into the shape you meant (draw a rectangle, get a rectangle) with rounded corners. Roads don't matter: it's all about territory.
 - **📍** (bottom left of the map) jumps back to where you are.
-- **🏊 Pick a swim** lets you choose 25 m to 10 km. The app places one roundish area around the middle of the map, following roads and boundaries, sized for that swim.
+- **🏊 Pick a swim** lets you choose 25 m to 10 km. The app draws a circle from the middle of the map, sized so its boundary matches that swim.
 - **🗑️ Clear** starts over.
 
-The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
+Shapes never go out to sea: they're trimmed to the coastline and cut straight across river mouths. The boundary length sets the swim. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
 ## Build plan
 
 1. Blank app on the phone ✅
-2. Map where you draw or pick a shape that follows the roads, showing the swim to claim it ✅
+2. Map where you draw or pick a territory, showing the swim to claim it ✅
 3. Save the shape as a pending challenge (Supabase)
 4. Colour the territory once a qualifying swim is done
 5. Strava connection for real watch-recorded swims
