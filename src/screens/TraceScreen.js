@@ -23,6 +23,21 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+// "3 days", "1 hour", "a few minutes"
+function formatHeldFor(iso) {
+  const minutes = Math.max(0, (Date.now() - new Date(iso).getTime()) / 60000);
+  const units = [
+    ['day', 60 * 24],
+    ['hour', 60],
+    ['minute', 1],
+  ];
+  for (const [name, size] of units) {
+    const n = Math.floor(minutes / size);
+    if (n >= 1 && (name !== 'minute' || n >= 5)) return `${n} ${name}${n === 1 ? '' : 's'}`;
+  }
+  return 'a few minutes';
+}
+
 function formatDistance(metres) {
   if (metres < 1000) return `${metres} m`;
   return `${(metres / 1000).toFixed(2).replace(/\.?0+$/, '')} km`;
@@ -43,6 +58,7 @@ export default function TraceScreen() {
   const [nickname, setNickname] = useState('');
   const [colour, setColour] = useState(SWIMMER_COLOURS[0]);
   const [profileError, setProfileError] = useState(null);
+  const [tapped, setTapped] = useState(null);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -76,12 +92,13 @@ export default function TraceScreen() {
 
   function showTerritory(areas) {
     setTerritory(areas);
+    setTapped(null);
     const forMap = areas.map((a) => ({
+      id: a.id,
       geometry: a.boundary,
       mine: a.mine,
       nickname: a.nickname,
       colour: a.colour,
-      claimedAt: a.claimed_at,
     }));
     run(`window.swimMap.showTerritory(${JSON.stringify(forMap)})`);
   }
@@ -192,10 +209,7 @@ export default function TraceScreen() {
         );
         break;
       case 'areaTapped':
-        if (message.nickname) {
-          const since = message.claimedAt ? ` since ${formatDate(message.claimedAt)}` : '';
-          setStatus(message.mine ? `That's your area${since}.` : `Held by ${message.nickname}${since}.`);
-        }
+        setTapped(territory.find((a) => a.id === message.id) ?? null);
         break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
@@ -260,6 +274,23 @@ export default function TraceScreen() {
         <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
           <Text style={styles.locateText}>📍</Text>
         </Pressable>
+        {tapped ? (
+          <View style={styles.areaCard}>
+            <View style={[styles.areaSwatch, { backgroundColor: tapped.colour }]} />
+            <View style={styles.areaInfo}>
+              <Text style={styles.areaName}>{tapped.mine ? `${tapped.nickname} (you)` : tapped.nickname}</Text>
+              <Text style={styles.areaLine}>
+                Held for {formatHeldFor(tapped.claimed_at)} · since {formatDate(tapped.claimed_at)}
+              </Text>
+              {tapped.swim_metres ? (
+                <Text style={styles.areaLine}>Won with a {formatDistance(tapped.swim_metres)} swim</Text>
+              ) : null}
+            </View>
+            <Pressable onPress={() => setTapped(null)} hitSlop={12}>
+              <Text style={styles.areaClose}>✕</Text>
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.panel}>
@@ -400,6 +431,42 @@ const styles = StyleSheet.create({
     color: '#9FD3F0',
     fontSize: 13,
     marginTop: 2,
+  },
+  areaCard: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    elevation: 6,
+  },
+  areaSwatch: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+  },
+  areaInfo: {
+    flex: 1,
+  },
+  areaName: {
+    color: '#0B3D5C',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  areaLine: {
+    color: '#145A86',
+    fontSize: 14,
+    marginTop: 2,
+  },
+  areaClose: {
+    color: '#0B3D5C',
+    fontSize: 20,
+    paddingHorizontal: 4,
   },
   me: {
     flexDirection: 'row',
