@@ -1,11 +1,12 @@
 {
   "expo": {
-    "name": "swim-territory",
+    "name": "Swim Territory",
     "slug": "swim-territory",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "backgroundColor": "#0B3D5C",
     "ios": {
       "supportsTablet": true
     },
