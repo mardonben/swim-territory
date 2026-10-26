@@ -3,7 +3,13 @@ import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
-import { cancelChallenge, getPendingChallenge, lockInChallenge } from '../lib/challenges';
+import {
+  cancelChallenge,
+  completeChallenge,
+  getPendingChallenge,
+  getTerritory,
+  lockInChallenge,
+} from '../lib/challenges';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
@@ -25,6 +31,7 @@ export default function TraceScreen() {
   const [target, setTarget] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pending, setPending] = useState(null);
+  const [territory, setTerritory] = useState([]);
   const [saving, setSaving] = useState(false);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
@@ -57,14 +64,36 @@ export default function TraceScreen() {
     run(`window.swimMap.showPending(${JSON.stringify(coords)})`);
   }
 
-  // Once the map is up, jump to where the phone is and load any pending challenge.
+  function showTerritory(claims) {
+    setTerritory(claims);
+    run(`window.swimMap.showTerritory(${JSON.stringify(claims.map((c) => c.boundary.coordinates[0]))})`);
+  }
+
+  // Once the map is up, jump to where the phone is and load your challenge and territory.
   useEffect(() => {
     if (!mapReady) return;
     goToMe().catch(() => {});
     getPendingChallenge()
       .then(showPending)
       .catch(() => {});
+    getTerritory()
+      .then(showTerritory)
+      .catch(() => {});
   }, [mapReady]);
+
+  async function markSwum() {
+    setSaving(true);
+    try {
+      await completeChallenge(pending.id);
+      showPending(null);
+      showTerritory(await getTerritory());
+      setStatus('🦈 Sharked it! That area is now your territory.');
+    } catch (e) {
+      setStatus(`Couldn't claim it: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function lockIn() {
     setSaving(true);
@@ -150,6 +179,11 @@ export default function TraceScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
+        {territory.length > 0 ? (
+          <Text style={styles.subtitle}>
+            {territory.length} {territory.length === 1 ? 'area' : 'areas'} claimed
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.mapWrap}>
@@ -176,6 +210,11 @@ export default function TraceScreen() {
               <Text style={styles.pendingCancel}>Cancel</Text>
             </Pressable>
           </View>
+        ) : null}
+        {pending ? (
+          <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
+            <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
+          </Pressable>
         ) : null}
         {shape ? (
           <>
@@ -249,6 +288,15 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 22,
     fontWeight: 'bold',
+  },
+  subtitle: {
+    color: '#9FD3F0',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  swum: {
+    backgroundColor: '#00A79D',
+    marginBottom: 4,
   },
   help: {
     color: '#9FD3F0',

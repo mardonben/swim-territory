@@ -47,10 +47,14 @@ Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as
 
 The app is already connected to the Sharked Supabase project, and the `challenges` table is set up (`supabase/schema.sql`, safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
 
+## Claiming territory (test mode)
+
+While a challenge is pending, **✅ I swam it (test)** pretends you've done the swim. The challenge turns into your territory, filled in teal on the map, and the header counts your claimed areas. Once Strava is connected, a real watch-recorded swim will do this instead and the test button goes.
+
 ## Build plan
 
 1. Blank app on the phone ✅
 2. Map where you draw or pick a territory, showing the swim to claim it ✅
 3. Save the shape as a pending challenge (Supabase) ✅
-4. Colour the territory once a qualifying swim is done
+4. Colour the territory once a qualifying swim is done ✅ (test button for now)
 5. Strava connection for real watch-recorded swims

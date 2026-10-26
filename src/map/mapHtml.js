@@ -156,6 +156,17 @@ ${outlineScript}
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
+    // Areas the swimmer has claimed: a list of boundary rings.
+    showTerritory(rings) {
+      map.getSource('territory').setData({
+        type: 'FeatureCollection',
+        features: rings.map((coords) => ({
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'Polygon', coordinates: [coords] },
+        })),
+      });
+    },
     // The locked-in challenge waiting for its swim, or null to remove it.
     showPending(coords) {
       map.getSource('pending').setData(coords ? {
@@ -189,6 +200,15 @@ ${outlineScript}
     map.addSource('shape', { type: 'geojson', data: emptyFeature() });
     map.addSource('me', { type: 'geojson', data: emptyFeature() });
     map.addSource('pending', { type: 'geojson', data: emptyFeature() });
+    map.addSource('territory', { type: 'geojson', data: emptyFeature() });
+    map.addLayer({
+      id: 'territory-fill', type: 'fill', source: 'territory',
+      paint: { 'fill-color': '#00A79D', 'fill-opacity': 0.45 },
+    });
+    map.addLayer({
+      id: 'territory-outline', type: 'line', source: 'territory',
+      paint: { 'line-color': '#00796B', 'line-width': 3 },
+    });
     map.addLayer({
       id: 'pending-fill', type: 'fill', source: 'pending',
       paint: { 'fill-color': '#FF6B35', 'fill-opacity': 0.15 },
