@@ -2,7 +2,10 @@
 // working in Expo Go, because the native Mapbox library would need a custom build.
 // The page and the app talk to each other with short JSON messages.
 
+import { outlineScript } from './outlineScript';
+
 const MAPBOX_GL_VERSION = '3.9.4';
+const TURF_VERSION = '7.2.0';
 
 export function buildMapHtml({ token, center }) {
   return `<!doctype html>
@@ -12,6 +15,7 @@ export function buildMapHtml({ token, center }) {
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <link href="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.css" rel="stylesheet" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v${MAPBOX_GL_VERSION}/mapbox-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@${TURF_VERSION}/turf.min.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; }
   body { background: #0B3D5C; }
@@ -21,8 +25,10 @@ export function buildMapHtml({ token, center }) {
 <div id="map"></div>
 <script>
   const TOKEN = ${JSON.stringify(token)};
-  const MAX_MATCH_POINTS = 90;     // Mapbox Map Matching accepts up to 100 points
-  const SNAP_RADIUS_METRES = 35;   // how far a traced point may be from a road
+  // Map layers whose lines can form a territory edge: roads and paths, and the
+  // edges of fields, parks and other land.
+  const EDGE_SOURCE_LAYERS = ['road', 'landuse', 'landuse_overlay'];
+  const SKIP_CLASSES = ['ferry', 'aerialway'];
 
   function send(message) {
     if (window.ReactNativeWebView) {
@@ -44,40 +50,7 @@ export function buildMapHtml({ token, center }) {
   let drawMode = false;
   let traced = [];
 
-  function haversine(a, b) {
-    const R = 6371000;
-    const toRad = (d) => (d * Math.PI) / 180;
-    const dLat = toRad(b[1] - a[1]);
-    const dLng = toRad(b[0] - a[0]);
-    const h = Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(h));
-  }
-
-  function lineLength(coords) {
-    let total = 0;
-    for (let i = 1; i < coords.length; i++) total += haversine(coords[i - 1], coords[i]);
-    return total;
-  }
-
-  // Pick evenly spaced points along the trace so we stay under the API limit.
-  function resample(coords, maxPoints) {
-    if (coords.length <= maxPoints) return coords;
-    const total = lineLength(coords);
-    const step = total / (maxPoints - 1);
-    const out = [coords[0]];
-    let travelled = 0;
-    let next = step;
-    for (let i = 1; i < coords.length; i++) {
-      travelled += haversine(coords[i - 1], coords[i]);
-      if (travelled >= next) {
-        out.push(coords[i]);
-        next += step;
-      }
-    }
-    out[out.length - 1] = coords[coords.length - 1];
-    return out.slice(0, maxPoints);
-  }
+${outlineScript}
 
   function setLine(sourceId, coords) {
     map.getSource(sourceId).setData({
@@ -97,48 +70,38 @@ export function buildMapHtml({ token, center }) {
     return { type: 'FeatureCollection', features: [] };
   }
 
-  async function snapToRoads(coords) {
-    const points = resample(coords, MAX_MATCH_POINTS);
-    const path = points.map((c) => c[0].toFixed(6) + ',' + c[1].toFixed(6)).join(';');
-    const radiuses = points.map(() => SNAP_RADIUS_METRES).join(';');
-    const url = 'https://api.mapbox.com/matching/v5/mapbox/walking/' + path +
-      '?geometries=geojson&overview=full&tidy=true&radiuses=' + radiuses +
-      '&access_token=' + TOKEN;
-    const response = await fetch(url);
-    const data = await response.json();
-    if (data.code !== 'Ok' || !data.matchings || data.matchings.length === 0) {
-      throw new Error(data.message || data.code || 'No match');
-    }
-    let snapped = [];
-    for (const m of data.matchings) snapped = snapped.concat(m.geometry.coordinates);
-    return snapped;
+  // Everything drawn on screen under the loop that could be a territory edge.
+  function edgeGeometries(loop) {
+    const pixels = loop.map((c) => map.project(c));
+    const xs = pixels.map((p) => p.x);
+    const ys = pixels.map((p) => p.y);
+    const pad = 40;
+    const box = [
+      [Math.min(...xs) - pad, Math.min(...ys) - pad],
+      [Math.max(...xs) + pad, Math.max(...ys) + pad],
+    ];
+    return map.queryRenderedFeatures(box)
+      .filter((f) => EDGE_SOURCE_LAYERS.includes(f.sourceLayer))
+      .filter((f) => !SKIP_CLASSES.includes(f.properties && f.properties.class))
+      .map((f) => f.geometry);
   }
 
-  async function finishTrace() {
+  function finishTrace() {
     if (traced.length < 5) {
       traced = [];
       setLine('trace', []);
       return;
     }
     const loop = traced.concat([traced[0]]);
-    send({ type: 'snapping' });
-
-    let shape = loop;
-    let snapped = false;
-    try {
-      shape = await snapToRoads(loop);
-      const first = shape[0];
-      const last = shape[shape.length - 1];
-      if (first[0] !== last[0] || first[1] !== last[1]) shape = shape.concat([first]);
-      snapped = true;
-    } catch (e) {
-      send({ type: 'snapFailed', message: String(e.message || e) });
-    }
-
-    setLine('trace', []);
-    setShape(shape);
     traced = [];
-    send({ type: 'shape', distanceMetres: Math.round(lineLength(shape)), snapped, coordinates: shape });
+    setLine('trace', []);
+    try {
+      const outline = buildOutline(loop, edgeGeometries(loop));
+      setShape(outline.coords);
+      send({ type: 'shape', perimeterMetres: outline.perimeterMetres, fromMap: outline.fromMap, coordinates: outline.coords });
+    } catch (e) {
+      send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
+    }
   }
 
   function pointFromEvent(e) {
@@ -197,10 +160,11 @@ export function buildMapHtml({ token, center }) {
     map.addSource('shape', { type: 'geojson', data: emptyFeature() });
     map.addLayer({
       id: 'shape-fill', type: 'fill', source: 'shape',
-      paint: { 'fill-color': '#1E90FF', 'fill-opacity': 0.25 },
+      paint: { 'fill-color': '#1E90FF', 'fill-opacity': 0.3 },
     });
     map.addLayer({
       id: 'shape-outline', type: 'line', source: 'shape',
+      layout: { 'line-join': 'miter' },
       paint: { 'line-color': '#0B3D5C', 'line-width': 4 },
     });
     map.addLayer({

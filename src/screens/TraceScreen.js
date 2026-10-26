@@ -6,6 +6,8 @@ import { buildMapHtml } from '../map/mapHtml';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
+// Every 1 km you swim claims 4 km of territory outline.
+const OUTLINE_PER_SWIM = 4;
 
 function formatDistance(metres) {
   if (metres < 1000) return `${metres} m`;
@@ -18,6 +20,8 @@ export default function TraceScreen() {
   const [drawing, setDrawing] = useState(false);
   const [shape, setShape] = useState(null);
   const [status, setStatus] = useState('Loading map…');
+
+  const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
   const html = useMemo(() => buildMapHtml({ token: MAPBOX_TOKEN, center: LONDON }), []);
 
@@ -47,15 +51,13 @@ export default function TraceScreen() {
         setMapReady(true);
         setStatus('Tap ✏️ Draw, then trace a loop with your finger.');
         break;
-      case 'snapping':
-        setStatus('Snapping to roads…');
-        break;
-      case 'snapFailed':
-        setStatus("Couldn't snap to roads, so this is your hand-drawn shape.");
-        break;
       case 'shape':
         setShape(message);
-        if (message.snapped) setStatus('Snapped to roads. Draw again to replace it.');
+        setStatus(
+          message.fromMap
+            ? 'Outline follows the roads, paths and fields inside your loop. Draw again to replace it.'
+            : 'No roads or paths found inside, so this is your hand-drawn shape.'
+        );
         break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
@@ -105,9 +107,11 @@ export default function TraceScreen() {
       <View style={styles.panel}>
         {shape ? (
           <>
-            <Text style={styles.distance}>{formatDistance(shape.distanceMetres)}</Text>
+            <Text style={styles.label}>Swim to claim it</Text>
+            <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
             <Text style={styles.lengths}>
-              about {Math.round(shape.distanceMetres / 25)} lengths of a 25 m pool
+              about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
+              {formatDistance(shape.perimeterMetres)}
             </Text>
           </>
         ) : null}
@@ -162,6 +166,12 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 32,
     alignItems: 'center',
+  },
+  label: {
+    color: '#9FD3F0',
+    fontSize: 14,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   distance: {
     color: '#FFFFFF',
