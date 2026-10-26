@@ -63,13 +63,12 @@ export default function TraceScreen() {
       case 'shape':
         setShape(message);
         setStatus(
-          message.fromMap
-            ? 'Corners and edges follow the roads where they can. Draw again to replace it.'
-            : 'No roads nearby, so your shape is kept as drawn.'
+          message.suggested
+            ? 'Here’s an area sized for that swim, around the middle of the map. Draw your own to replace it.'
+            : message.fromMap
+              ? 'Corners and edges follow the roads where they can. Draw again to replace it.'
+              : 'No roads nearby, so your shape is kept as drawn.'
         );
-        break;
-      case 'suggestions':
-        setStatus('Tap a green area to pick it, or draw your own.');
         break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
@@ -81,7 +80,7 @@ export default function TraceScreen() {
     setPickerOpen(false);
     setTarget(metres);
     setShape(null);
-    setStatus('Finding areas to claim…');
+    setStatus('Finding an area to claim…');
     run(`window.swimMap.suggest(${metres * OUTLINE_PER_SWIM})`);
   }
 
@@ -203,8 +202,9 @@ const styles = StyleSheet.create({
   },
   locate: {
     position: 'absolute',
-    right: 12,
-    bottom: 12,
+    left: 12,
+    // Sits above the Mapbox logo, which has to stay visible.
+    bottom: 40,
     width: 48,
     height: 48,
     borderRadius: 24,

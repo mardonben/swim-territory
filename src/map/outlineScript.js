@@ -150,7 +150,37 @@ function roadIndex(features, proj, spacing, cellSize) {
 }
 
 // loop: [lng, lat] points (closed or not). features: map features near it.
-function shapeFromLoop(loop, features, prepared) {
+// Softens every corner with a curve. Long straight edges keep their length,
+// short wiggles get smoothed away.
+function roundCorners(pts, radius) {
+  const n = pts.length;
+  if (n < 3) return pts.slice();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n];
+    const p = pts[i];
+    const next = pts[(i + 1) % n];
+    const lenIn = dist(prev, p);
+    const lenOut = dist(p, next);
+    const cut = Math.min(radius, lenIn * 0.45, lenOut * 0.45);
+    if (cut < 0.5) { out.push(p); continue; }
+    const a = [p[0] + ((prev[0] - p[0]) * cut) / lenIn, p[1] + ((prev[1] - p[1]) * cut) / lenIn];
+    const b = [p[0] + ((next[0] - p[0]) * cut) / lenOut, p[1] + ((next[1] - p[1]) * cut) / lenOut];
+    // Curve from a to b, bending towards the corner.
+    for (let s = 0; s <= 6; s++) {
+      const t = s / 6;
+      out.push([
+        (1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * p[0] + t * t * b[0],
+        (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * p[1] + t * t * b[1],
+      ]);
+    }
+  }
+  return out;
+}
+
+// options.cornerDetail: smaller keeps more corners (rounder shapes).
+function shapeFromLoop(loop, features, prepared, options) {
+  const cornerDetail = (options && options.cornerDetail) || 0.08;
   const pts = loop.slice();
   if (dist(pts[0], pts[pts.length - 1]) === 0) pts.pop();
   const origin = pts[0];
@@ -162,7 +192,7 @@ function shapeFromLoop(loop, features, prepared) {
     : roadIndex(features, proj, clamp(size / 40, 3, 40), clamp(size / 5, 10, 80));
 
   // 1. The shape you meant: a handful of corners.
-  let corners = simplifyClosed(xy, 0.08 * size);
+  let corners = simplifyClosed(xy, cornerDetail * size);
   if (corners.length < 3) corners = simplifyClosed(xy, 0.03 * size);
   if (corners.length < 3) corners = xy.slice(0, 3);
 
@@ -175,7 +205,8 @@ function shapeFromLoop(loop, features, prepared) {
     const r = roads.nearestPoint(c, snapR * 0.6);
     if (r) { onRoads++; return r; }
     return c;
-  });
+  }).filter((c, i, all) => i === 0 || dist(c, all[i - 1]) > 1);
+  if (corners.length > 3 && dist(corners[0], corners[corners.length - 1]) <= 1) corners.pop();
 
   // 3. Each edge follows a road only if one runs right alongside it.
   const edgeR = clamp(0.06 * size, 5, 30);
@@ -201,37 +232,38 @@ function shapeFromLoop(loop, features, prepared) {
     const edge = followsRoad ? roadPath : [a, b];
     outline.push(...edge.slice(0, -1));
   }
-  outline.push(outline[0]);
+  const rounded = roundCorners(outline, clamp(0.1 * size, 5, 120));
+  rounded.push(rounded[0]);
 
   return {
-    coords: outline.map(proj.from),
-    perimeterMetres: Math.round(pathLength(outline)),
+    coords: rounded.map(proj.from),
+    perimeterMetres: Math.round(pathLength(rounded)),
     fromMap: roads.count > 0 && onRoads > 0,
   };
 }
 
-// Squares near the centre, resized until the outline matches the target length.
-function suggestShapes(center, targetPerimeter, features) {
+// One roughly round area centred on you, resized until its outline matches
+// the target length.
+function suggestShape(center, targetPerimeter, features) {
   const proj = projector(center);
-  const side = targetPerimeter / 4;
-  const roads = roadIndex(features, proj, clamp(side / 40, 3, 40), clamp(side / 5, 10, 80));
+  const radius = targetPerimeter / (2 * Math.PI);
+  const size = radius * 1.8;
+  const roads = roadIndex(features, proj, clamp(size / 40, 3, 40), clamp(size / 5, 10, 80));
   const prepared = { proj, roads };
-  const gap = side * 1.3;
-  const centres = [[0, 0], [0, gap], [gap, 0], [0, -gap], [-gap, 0]];
-  const results = [];
-  for (const [cx, cy] of centres) {
-    let s = side;
-    let best = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const h = s / 2;
-      const square = [[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h]].map(proj.from);
-      const shape = shapeFromLoop(square, null, prepared);
-      if (!best || Math.abs(shape.perimeterMetres - targetPerimeter) < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
-      if (Math.abs(shape.perimeterMetres - targetPerimeter) / targetPerimeter < 0.05) break;
-      s *= targetPerimeter / shape.perimeterMetres;
+  // Snapping to junctions makes size jump in steps, so try a spread of sizes
+  // and keep the closest match.
+  let best = null;
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const r = radius * (0.7 + attempt * 0.05);
+    const circle = [];
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * 2 * Math.PI;
+      circle.push(proj.from([r * Math.cos(a), r * Math.sin(a)]));
     }
-    results.push(best);
+    const shape = shapeFromLoop(circle, null, prepared, { cornerDetail: 0.025 });
+    if (!best || Math.abs(shape.perimeterMetres - targetPerimeter) < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
+    if (Math.abs(shape.perimeterMetres - targetPerimeter) / targetPerimeter < 0.03) break;
   }
-  return results;
+  return best;
 }
 `;

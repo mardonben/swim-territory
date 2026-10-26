@@ -34,9 +34,9 @@ Each time you want to try the latest version:
 ## Using the map
 
 - **Move and zoom** with two fingers. One finger never moves the map.
-- **Draw** a loop with one finger and lift it. The app keeps the shape you drew (draw a rectangle, get a rectangle), pulls the corners onto nearby road junctions, and runs edges along roads where a road sits right alongside. Otherwise edges stay straight, bridging gaps between roads.
-- **📍** (bottom right of the map) jumps back to where you are.
-- **🏊 Pick a swim** lets you choose 25 m to 10 km. The map zooms out and shows dashed green areas nearby sized for that swim. Tap one to pick it.
+- **Draw** a loop with one finger and lift it. The app keeps the shape you drew (draw a rectangle, get a rectangle), pulls the corners onto nearby road junctions, and runs edges along roads where a road sits right alongside. Otherwise edges stay straight, bridging gaps between roads. Corners are rounded off.
+- **📍** (bottom left of the map) jumps back to where you are.
+- **🏊 Pick a swim** lets you choose 25 m to 10 km. The app places one roundish area around the middle of the map, following roads and boundaries, sized for that swim.
 - **🗑️ Clear** starts over.
 
 The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.

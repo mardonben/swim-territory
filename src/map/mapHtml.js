@@ -54,7 +54,6 @@ export function buildMapHtml({ token, center }) {
   map.touchZoomRotate.disableRotation();
 
   let traced = [];
-  let suggestions = [];
 
 ${outlineScript}
 
@@ -76,19 +75,6 @@ ${outlineScript}
     });
   }
 
-  function setSuggestions(list) {
-    suggestions = list;
-    map.getSource('suggestions').setData({
-      type: 'FeatureCollection',
-      features: list.map((s, i) => ({
-        type: 'Feature',
-        id: i,
-        properties: { index: i },
-        geometry: { type: 'Polygon', coordinates: [s.coords] },
-      })),
-    });
-  }
-
   // Everything drawn on screen (or in a box of it) that could be a territory edge.
   function edgeFeatures(box) {
     return map.queryRenderedFeatures(box)
@@ -107,9 +93,9 @@ ${outlineScript}
     ];
   }
 
-  function sendShape(shape) {
+  function sendShape(shape, suggested) {
     setShape(shape.coords);
-    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, fromMap: shape.fromMap, coordinates: shape.coords });
+    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, fromMap: shape.fromMap, suggested: !!suggested, coordinates: shape.coords });
   }
 
   function finishTrace() {
@@ -117,20 +103,10 @@ ${outlineScript}
     traced = [];
     setLine('trace', []);
     try {
-      setSuggestions([]);
       sendShape(shapeFromLoop(loop, edgeFeatures(boxAround(loop))));
     } catch (e) {
       send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
     }
-  }
-
-  // A quick tap on a suggested area picks it.
-  function handleTap(point) {
-    const hit = map.queryRenderedFeatures(point, { layers: ['suggestion-fill'] })[0];
-    if (!hit) return;
-    const chosen = suggestions[hit.properties.index];
-    setSuggestions([]);
-    sendShape(chosen);
   }
 
   function screenPoint(touch) {
@@ -143,20 +119,15 @@ ${outlineScript}
     return [ll.lng, ll.lat];
   }
 
-  let tapStart = null;
-
   function onTouchStart(e) {
     if (e.touches.length > 1) {
       // A second finger means move/zoom, so drop whatever was being drawn.
       traced = [];
-      tapStart = null;
       setLine('trace', []);
       return;
     }
     e.preventDefault();
-    const p = screenPoint(e.touches[0]);
-    tapStart = p;
-    traced = [lngLatAt(p)];
+    traced = [lngLatAt(screenPoint(e.touches[0]))];
   }
 
   function onTouchMove(e) {
@@ -169,10 +140,8 @@ ${outlineScript}
   function onTouchEnd(e) {
     if (traced.length === 0) return;
     if (traced.length < 5) {
-      const p = tapStart;
       traced = [];
       setLine('trace', []);
-      if (p) handleTap(p);
       return;
     }
     finishTrace();
@@ -184,7 +153,6 @@ ${outlineScript}
       traced = [];
       setLine('trace', []);
       setShape([]);
-      setSuggestions([]);
     },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
@@ -194,20 +162,17 @@ ${outlineScript}
     },
     suggest(targetPerimeterMetres) {
       setShape([]);
-      setSuggestions([]);
       const center = map.getCenter().toArray();
-      // Zoom so all the suggested areas fit on screen, then read the roads there.
-      const reach = (targetPerimeterMetres / 4) * 2.2;
+      // Zoom so the area fits on screen, then read the roads there.
+      const reach = (targetPerimeterMetres / (2 * Math.PI)) * 1.8;
       const dLat = reach / 110540;
       const dLng = reach / (111320 * Math.cos((center[1] * Math.PI) / 180));
       map.fitBounds([[center[0] - dLng, center[1] - dLat], [center[0] + dLng, center[1] + dLat]], { duration: 0, padding: 10 });
       map.once('idle', () => {
         try {
-          const list = suggestShapes(center, targetPerimeterMetres, edgeFeatures());
-          setSuggestions(list);
-          send({ type: 'suggestions', count: list.length });
+          sendShape(suggestShape(center, targetPerimeterMetres, edgeFeatures()), true);
         } catch (e) {
-          send({ type: 'error', message: 'Could not find areas to suggest here.' });
+          send({ type: 'error', message: 'Could not find an area to suggest here.' });
         }
       });
     },
@@ -216,17 +181,7 @@ ${outlineScript}
   map.on('load', () => {
     map.addSource('trace', { type: 'geojson', data: emptyFeature() });
     map.addSource('shape', { type: 'geojson', data: emptyFeature() });
-    map.addSource('suggestions', { type: 'geojson', data: emptyFeature() });
     map.addSource('me', { type: 'geojson', data: emptyFeature() });
-    map.addLayer({
-      id: 'suggestion-fill', type: 'fill', source: 'suggestions',
-      paint: { 'fill-color': '#2ECC71', 'fill-opacity': 0.18 },
-    });
-    map.addLayer({
-      id: 'suggestion-outline', type: 'line', source: 'suggestions',
-      layout: { 'line-join': 'miter' },
-      paint: { 'line-color': '#1E8449', 'line-width': 3, 'line-dasharray': [2, 1.5] },
-    });
     map.addLayer({
       id: 'shape-fill', type: 'fill', source: 'shape',
       paint: { 'fill-color': '#1E90FF', 'fill-opacity': 0.3 },
