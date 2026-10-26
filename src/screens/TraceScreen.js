@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
@@ -10,6 +10,7 @@ import {
   getTerritory,
   lockInChallenge,
 } from '../lib/challenges';
+import { getMyProfile, isValidNickname, NICKNAME_RULE, saveMyProfile, SWIMMER_COLOURS } from '../lib/profile';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
@@ -17,6 +18,10 @@ const LONDON = [-0.1276, 51.5072];
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
 const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
+
+function formatDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 function formatDistance(metres) {
   if (metres < 1000) return `${metres} m`;
@@ -33,6 +38,11 @@ export default function TraceScreen() {
   const [pending, setPending] = useState(null);
   const [territory, setTerritory] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [nickname, setNickname] = useState('');
+  const [colour, setColour] = useState(SWIMMER_COLOURS[0]);
+  const [profileError, setProfileError] = useState(null);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -66,7 +76,13 @@ export default function TraceScreen() {
 
   function showTerritory(areas) {
     setTerritory(areas);
-    const forMap = areas.map((a) => ({ geometry: a.boundary, mine: a.mine }));
+    const forMap = areas.map((a) => ({
+      geometry: a.boundary,
+      mine: a.mine,
+      nickname: a.nickname,
+      colour: a.colour,
+      claimedAt: a.claimed_at,
+    }));
     run(`window.swimMap.showTerritory(${JSON.stringify(forMap)})`);
   }
 
@@ -82,7 +98,36 @@ export default function TraceScreen() {
     getTerritory()
       .then(showTerritory)
       .catch(() => {});
+    // First time on this phone: pick a nickname before anything else.
+    getMyProfile()
+      .then((mine) => (mine ? setProfile(mine) : editProfile(null)))
+      .catch(() => {});
   }, [mapReady]);
+
+  function editProfile(current) {
+    setNickname(current?.nickname ?? '');
+    setColour(current?.colour ?? SWIMMER_COLOURS[Math.floor(Math.random() * SWIMMER_COLOURS.length)]);
+    setProfileError(null);
+    setProfileOpen(true);
+  }
+
+  async function saveProfile() {
+    const name = nickname.trim();
+    if (!isValidNickname(name)) {
+      setProfileError(`Nicknames can be ${NICKNAME_RULE}.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      setProfile(await saveMyProfile({ nickname: name, colour }));
+      setProfileOpen(false);
+      showTerritory(await getTerritory());
+    } catch (e) {
+      setProfileError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function markSwum() {
     setSaving(true);
@@ -146,6 +191,12 @@ export default function TraceScreen() {
             (message.trimmed ? ' Trimmed to the coastline.' : '')
         );
         break;
+      case 'areaTapped':
+        if (message.nickname) {
+          const since = message.claimedAt ? ` since ${formatDate(message.claimedAt)}` : '';
+          setStatus(message.mine ? `That's your area${since}.` : `Held by ${message.nickname}${since}.`);
+        }
+        break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
         break;
@@ -182,7 +233,15 @@ export default function TraceScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
-        {myAreas > 0 ? (
+        {profile ? (
+          <Pressable style={styles.me} onPress={() => editProfile(profile)}>
+            <View style={[styles.swatch, { backgroundColor: profile.colour }]} />
+            <Text style={styles.subtitle}>
+              {profile.nickname}
+              {myAreas > 0 ? ` · ${myAreas} ${myAreas === 1 ? 'area' : 'areas'} held` : ''} ✏️
+            </Text>
+          </Pressable>
+        ) : myAreas > 0 ? (
           <Text style={styles.subtitle}>
             {myAreas} {myAreas === 1 ? 'area' : 'areas'} held
           </Text>
@@ -268,6 +327,51 @@ export default function TraceScreen() {
           </View>
         </Pressable>
       </Modal>
+
+      <Modal
+        visible={profileOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => profile && setProfileOpen(false)}
+      >
+        <View style={[styles.backdrop, styles.centeredBackdrop]}>
+          <View style={styles.card}>
+            <Text style={styles.sheetTitle}>{profile ? 'Your nickname' : 'Pick a nickname'}</Text>
+            <Text style={styles.cardHelp}>
+              Other swimmers see this on your areas. Don't use your real name.
+            </Text>
+            <TextInput
+              style={styles.input}
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="e.g. Jaws"
+              maxLength={20}
+              autoCorrect={false}
+            />
+            <Text style={styles.cardHelp}>Your colour on the map</Text>
+            <View style={styles.colours}>
+              {SWIMMER_COLOURS.map((c) => (
+                <Pressable
+                  key={c}
+                  onPress={() => setColour(c)}
+                  style={[styles.colour, { backgroundColor: c }, c === colour && styles.colourChosen]}
+                />
+              ))}
+            </View>
+            {profileError ? <Text style={styles.error}>{profileError}</Text> : null}
+            <View style={styles.buttons}>
+              {profile ? (
+                <Pressable style={[styles.button, styles.secondary]} onPress={() => setProfileOpen(false)}>
+                  <Text style={[styles.buttonText, styles.secondaryText]}>Cancel</Text>
+                </Pressable>
+              ) : null}
+              <Pressable style={[styles.button, styles.lockIn, styles.flat]} onPress={saveProfile} disabled={saving}>
+                <Text style={styles.buttonText}>{saving ? 'Saving…' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -296,6 +400,75 @@ const styles = StyleSheet.create({
     color: '#9FD3F0',
     fontSize: 13,
     marginTop: 2,
+  },
+  me: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  swatch: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  centeredBackdrop: {
+    justifyContent: 'center',
+    padding: 24,
+  },
+  card: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+  },
+  cardHelp: {
+    color: '#0B3D5C',
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  input: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: '#9FD3F0',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    fontSize: 18,
+    color: '#0B3D5C',
+    marginTop: 12,
+  },
+  colours: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 10,
+  },
+  colour: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
+  colourChosen: {
+    borderWidth: 4,
+    borderColor: '#0B3D5C',
+  },
+  error: {
+    color: '#E74C3C',
+    fontSize: 14,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  secondary: {
+    backgroundColor: '#E8F4FB',
+  },
+  secondaryText: {
+    color: '#0B3D5C',
+  },
+  flat: {
+    marginTop: 0,
   },
   swum: {
     backgroundColor: '#00A79D',
