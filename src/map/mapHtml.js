@@ -156,6 +156,13 @@ ${outlineScript}
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
+    // The locked-in challenge waiting for its swim, or null to remove it.
+    showPending(coords) {
+      map.getSource('pending').setData(coords ? {
+        type: 'Feature',
+        geometry: { type: 'Polygon', coordinates: [coords] },
+      } : emptyFeature());
+    },
     showMe(lng, lat) {
       map.getSource('me').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] } });
     },
@@ -181,6 +188,15 @@ ${outlineScript}
     map.addSource('trace', { type: 'geojson', data: emptyFeature() });
     map.addSource('shape', { type: 'geojson', data: emptyFeature() });
     map.addSource('me', { type: 'geojson', data: emptyFeature() });
+    map.addSource('pending', { type: 'geojson', data: emptyFeature() });
+    map.addLayer({
+      id: 'pending-fill', type: 'fill', source: 'pending',
+      paint: { 'fill-color': '#FF6B35', 'fill-opacity': 0.15 },
+    });
+    map.addLayer({
+      id: 'pending-outline', type: 'line', source: 'pending',
+      paint: { 'line-color': '#FF6B35', 'line-width': 3, 'line-dasharray': [3, 2] },
+    });
     map.addLayer({
       id: 'shape-fill', type: 'fill', source: 'shape',
       paint: { 'fill-color': '#1E90FF', 'fill-opacity': 0.3 },

@@ -3,6 +3,7 @@ import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
+import { cancelChallenge, getPendingChallenge, lockInChallenge } from '../lib/challenges';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
@@ -23,6 +24,8 @@ export default function TraceScreen() {
   const [status, setStatus] = useState('Loading map…');
   const [target, setTarget] = useState(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pending, setPending] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -48,10 +51,52 @@ export default function TraceScreen() {
     }
   }
 
-  // Once the map is up, jump to where the phone is.
+  function showPending(challenge) {
+    setPending(challenge);
+    const coords = challenge ? challenge.boundary.coordinates[0] : null;
+    run(`window.swimMap.showPending(${JSON.stringify(coords)})`);
+  }
+
+  // Once the map is up, jump to where the phone is and load any pending challenge.
   useEffect(() => {
-    if (mapReady) goToMe().catch(() => {});
+    if (!mapReady) return;
+    goToMe().catch(() => {});
+    getPendingChallenge()
+      .then(showPending)
+      .catch(() => {});
   }, [mapReady]);
+
+  async function lockIn() {
+    setSaving(true);
+    try {
+      const challenge = await lockInChallenge({
+        coordinates: shape.coordinates,
+        boundaryMetres: shape.perimeterMetres,
+        swimMetres,
+      });
+      setShape(null);
+      run('window.swimMap.clear()');
+      showPending(challenge);
+      setStatus(`Locked in! Swim ${formatDistance(challenge.swim_metres)} in one go to claim it.`);
+    } catch (e) {
+      setStatus(`Couldn't save: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelPending() {
+    setSaving(true);
+    try {
+      await cancelChallenge(pending.id);
+      showPending(null);
+      setStatus('Challenge cancelled. ' + DRAW_HINT);
+    } catch (e) {
+      setStatus(`Couldn't cancel: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function onMessage(event) {
     const message = JSON.parse(event.nativeEvent.data);
@@ -122,6 +167,16 @@ export default function TraceScreen() {
       </View>
 
       <View style={styles.panel}>
+        {pending ? (
+          <View style={styles.pending}>
+            <Text style={styles.pendingText}>
+              🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
+            </Text>
+            <Pressable onPress={cancelPending} disabled={saving}>
+              <Text style={styles.pendingCancel}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
         {shape ? (
           <>
             <Text style={styles.label}>Swim to claim it</Text>
@@ -133,6 +188,14 @@ export default function TraceScreen() {
           </>
         ) : null}
         <Text style={styles.status}>{status}</Text>
+        {shape && !pending ? (
+          <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
+            <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
+          </Pressable>
+        ) : null}
+        {shape && pending ? (
+          <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
+        ) : null}
         <View style={styles.buttons}>
           <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
             <Text style={styles.buttonText}>
@@ -256,6 +319,30 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  pending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FF6B35',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+    marginBottom: 8,
+  },
+  pendingText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  pendingCancel: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    textDecorationLine: 'underline',
+  },
+  lockIn: {
+    backgroundColor: '#FF6B35',
+    marginTop: 12,
   },
   backdrop: {
     flex: 1,

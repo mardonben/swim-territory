@@ -41,10 +41,16 @@ Each time you want to try the latest version:
 
 Shapes never go out to sea: they're trimmed to the coastline and cut straight across river mouths. The boundary length sets the swim. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
+## Locking in a challenge (needs Supabase, one-time setup)
+
+Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as your pending challenge and shows on the map as an orange dashed area, with a banner saying how far to swim. You can have one pending challenge at a time; tap **Cancel** on the banner to drop it.
+
+The app is already connected to the Sharked Supabase project, and the `challenges` table is set up (`supabase/schema.sql`, safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
+
 ## Build plan
 
 1. Blank app on the phone ✅
 2. Map where you draw or pick a territory, showing the swim to claim it ✅
-3. Save the shape as a pending challenge (Supabase)
+3. Save the shape as a pending challenge (Supabase) ✅
 4. Colour the territory once a qualifying swim is done
 5. Strava connection for real watch-recorded swims
