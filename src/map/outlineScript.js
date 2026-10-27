@@ -173,12 +173,13 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     for (const m of mouthPts) nearest = Math.min(nearest, turf.distance(x.p, m.p, { units: 'meters' }));
     depth = Math.max(depth, nearest);
   }
-  // Long rivers and estuaries; or a narrow creek that runs in at least 500 m
-  // and three times its mouth width. Off screen it might go anywhere, but it
-  // must at least be river-shaped.
+  // Long rivers and estuaries (but not a bay nearly as wide as it is deep); or
+  // a narrow creek or dock that runs in at least 200 m and three times its
+  // mouth width. Off screen it might go anywhere, but it must at least be
+  // river-shaped.
   const farEnough =
-    depth >= inletDepthMetres ||
-    (depth >= Math.min(500, inletDepthMetres) && depth >= mouthWidth * 3) ||
+    (depth >= inletDepthMetres && depth >= mouthWidth * 2) ||
+    (depth >= Math.min(200, inletDepthMetres) && depth >= mouthWidth * 3) ||
     (offScreen && depth >= mouthWidth * 1.5);
   if (!farEnough) return null;
   // Bridging leaves the mouth curved; fill it out to a straight line.
