@@ -24,12 +24,16 @@ export async function getPendingChallenge() {
   return data;
 }
 
-export async function lockInChallenge({ coordinates, boundaryMetres, swimMetres }) {
+// rings: one outline per piece; a shape split by water has several.
+export async function lockInChallenge({ rings, boundaryMetres, swimMetres }) {
   await ensureSignedIn();
   const { data, error } = await supabase
     .from('challenges')
     .insert({
-      boundary: { type: 'Polygon', coordinates: [coordinates] },
+      boundary:
+        rings.length === 1
+          ? { type: 'Polygon', coordinates: [rings[0]] }
+          : { type: 'MultiPolygon', coordinates: rings.map((r) => [r]) },
       boundary_metres: boundaryMetres,
       swim_metres: swimMetres,
     })

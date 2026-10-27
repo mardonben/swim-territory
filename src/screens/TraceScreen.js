@@ -101,8 +101,7 @@ export default function TraceScreen() {
 
   function showPending(challenge) {
     setPending(challenge);
-    const coords = challenge ? challenge.boundary.coordinates[0] : null;
-    run(`window.swimMap.showPending(${JSON.stringify(coords)})`);
+    run(`window.swimMap.showPending(${JSON.stringify(challenge ? challenge.boundary : null)})`);
   }
 
   function showTerritory(areas) {
@@ -251,7 +250,7 @@ export default function TraceScreen() {
     setSaving(true);
     try {
       const challenge = await lockInChallenge({
-        coordinates: shape.coordinates,
+        rings: shape.rings,
         boundaryMetres: shape.perimeterMetres,
         swimMetres,
       });
@@ -292,7 +291,10 @@ export default function TraceScreen() {
           (message.suggested
             ? 'A circle sized for that swim, from the middle of the map.'
             : 'Your territory. Draw again to replace it.') +
-            (message.trimmed ? ' Trimmed to the coastline.' : '')
+            (message.trimmed ? ' Trimmed to the coastline.' : '') +
+            (message.rings.length > 1
+              ? ` Water splits it into ${message.rings.length} areas; their outlines are added together.`
+              : '')
         );
         break;
       case 'areaTapped':

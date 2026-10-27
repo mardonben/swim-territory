@@ -95,18 +95,18 @@ function closeRing(coords) {
   return coords.concat([coords[0]]);
 }
 
-// The biggest piece of a (multi)polygon, as its outer ring only. Lakes inside
-// a territory still count as territory.
-function largestOuterRing(feature) {
+// The pieces of a (multi)polygon as outer rings only, so lakes inside a
+// territory still count as territory. When water splits a shape (a wide bay,
+// a river), every real piece is kept; slivers under a tenth of the biggest
+// piece are dropped. Biggest first.
+function outerRings(feature) {
   const g = feature.geometry;
   const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
-  let best = null;
-  let bestArea = -1;
-  for (const poly of polys) {
-    const area = turf.area(turf.polygon([poly[0]]));
-    if (area > bestArea) { bestArea = area; best = poly[0]; }
-  }
-  return best;
+  const pieces = polys
+    .map((poly) => ({ ring: poly[0], area: turf.area(turf.polygon([poly[0]])) }))
+    .sort((a, b) => b.area - a.area);
+  if (pieces.length === 0) return [];
+  return pieces.filter((p) => p.area >= pieces[0].area * 0.1).map((p) => p.ring);
 }
 
 // Joins the water pieces drawn on screen (the map hands them over tile by
@@ -173,12 +173,12 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     for (const m of mouthPts) nearest = Math.min(nearest, turf.distance(x.p, m.p, { units: 'meters' }));
     depth = Math.max(depth, nearest);
   }
-  // Long rivers and estuaries (but not a bay nearly as wide as it is deep); or
+  // Long rivers and estuaries (but not a wide bay); or
   // a narrow creek or dock that runs in at least 200 m and three times its
   // mouth width. Off screen it might go anywhere, but it must at least be
   // river-shaped.
   const farEnough =
-    (depth >= inletDepthMetres && depth >= mouthWidth * 2) ||
+    (depth >= inletDepthMetres && depth >= mouthWidth * 2.5) ||
     (depth >= Math.min(200, inletDepthMetres) && depth >= mouthWidth * 3) ||
     (offScreen && depth >= mouthWidth * 1.5);
   if (!farEnough) return null;
@@ -222,7 +222,7 @@ function trimToLand(ring, water, sizeMetres, view) {
       return true;
     }
   });
-  if (toCut.length === 0) return { ring, trimmed: false };
+  if (toCut.length === 0) return { rings: [ring], trimmed: false };
 
   let land = area;
   for (const w of toCut) {
@@ -269,14 +269,16 @@ function trimToLand(ring, water, sizeMetres, view) {
   // Too little land to swim for: just a sliver of beach or a jetty.
   if (!kept || turf.area(kept) < turf.area(shape) * 0.02) throw new Error(SEA);
 
-  const outer = largestOuterRing(kept);
-  return outer ? { ring: outer, trimmed: true } : { ring, trimmed: false };
+  const rings = outerRings(kept);
+  return rings.length ? { rings, trimmed: true } : { rings: [ring], trimmed: false };
 }
 
+// The swim is set by the outline of every piece added together.
 function finish(ring, water, sizeMetres, view) {
   const result = trimToLand(ring, water, sizeMetres, view);
-  const perimeterKm = turf.length(turf.lineString(result.ring), { units: 'kilometers' });
-  return { coords: result.ring, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
+  const perimeterKm = result.rings.reduce(
+    (sum, r) => sum + turf.length(turf.lineString(r), { units: 'kilometers' }), 0);
+  return { rings: result.rings, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
 }
 
 // loop: finger-drawn [lng, lat] points. water: water polygons on screen.

@@ -66,10 +66,11 @@ ${outlineScript}
     });
   }
 
-  function setShape(coords) {
-    map.getSource('shape').setData(coords.length < 3 ? emptyFeature() : {
+  // rings: one outline per piece of the shape ([] to clear).
+  function setShape(rings) {
+    map.getSource('shape').setData(rings.length === 0 ? emptyFeature() : {
       type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [coords] },
+      geometry: { type: 'MultiPolygon', coordinates: rings.map((r) => [r]) },
     });
   }
 
@@ -88,11 +89,11 @@ ${outlineScript}
   }
 
   function sendShape(shape, suggested) {
-    setShape(shape.coords);
+    setShape(shape.rings);
     // Centre the new area in view.
-    const [w, south, e, n] = turf.bbox(turf.lineString(shape.coords));
+    const [w, south, e, n] = turf.bbox(turf.multiLineString(shape.rings));
     map.fitBounds([[w, south], [e, n]], { padding: 40, maxZoom: 17, duration: 600 });
-    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, coordinates: shape.coords });
+    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, rings: shape.rings });
   }
 
   function finishTrace() {
@@ -185,12 +186,9 @@ ${outlineScript}
         })),
       });
     },
-    // The locked-in challenge waiting for its swim, or null to remove it.
-    showPending(coords) {
-      map.getSource('pending').setData(coords ? {
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [coords] },
-      } : emptyFeature());
+    // The locked-in challenge's GeoJSON outline, or null to remove it.
+    showPending(geometry) {
+      map.getSource('pending').setData(geometry ? { type: 'Feature', geometry } : emptyFeature());
     },
     showMe(lng, lat) {
       map.getSource('me').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] } });
