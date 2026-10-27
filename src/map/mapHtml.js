@@ -73,23 +73,18 @@ ${outlineScript}
     });
   }
 
-  // Sea, rivers and lakes drawn on screen (or in a box of it), as polygons.
-  function waterFeatures(box) {
-    return map.queryRenderedFeatures(box)
+  // Sea, rivers and lakes drawn on screen, as polygons.
+  function waterFeatures() {
+    return map.queryRenderedFeatures()
       .filter((f) => f.sourceLayer === 'water')
       .filter((f) => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')
       .map((f) => ({ type: 'Feature', properties: {}, geometry: f.geometry }));
   }
 
-  function boxAround(loop) {
-    const pixels = loop.map((c) => map.project(c));
-    const xs = pixels.map((p) => p.x);
-    const ys = pixels.map((p) => p.y);
-    const pad = 60;
-    return [
-      [Math.min(...xs) - pad, Math.min(...ys) - pad],
-      [Math.max(...xs) + pad, Math.max(...ys) + pad],
-    ];
+  // The part of the map on screen, as a polygon.
+  function viewPolygon() {
+    const b = map.getBounds();
+    return turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
   }
 
   function sendShape(shape, suggested) {
@@ -102,7 +97,7 @@ ${outlineScript}
     traced = [];
     setLine('trace', []);
     try {
-      sendShape(shapeFromLoop(loop, waterFeatures(boxAround(loop))));
+      sendShape(shapeFromLoop(loop, waterFeatures(), viewPolygon()));
     } catch (e) {
       setShape([]);
       send({ type: 'error', message: e.message === SEA ? SEA : 'Could not make a shape from that loop. Try drawing it again.' });
@@ -200,7 +195,7 @@ ${outlineScript}
       map.fitBounds([[center[0] - dLng, center[1] - dLat], [center[0] + dLng, center[1] + dLat]], { duration: 0, padding: 10 });
       map.once('idle', () => {
         try {
-          sendShape(circleShape(center, targetPerimeterMetres, waterFeatures()), true);
+          sendShape(circleShape(center, targetPerimeterMetres, waterFeatures(), viewPolygon()), true);
         } catch (e) {
           send({ type: 'error', message: e.message === SEA ? SEA + ' Move the map inland and pick again.' : 'Could not find an area to suggest here.' });
         }

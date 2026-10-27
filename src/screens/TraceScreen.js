@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { setStatusBarStyle, StatusBar } from 'expo-status-bar';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
@@ -141,6 +142,22 @@ export default function TraceScreen() {
       setLeadersError(e.message);
     }
   }
+
+  // White clock and battery icons on the dark blue. Android can reset them when
+  // a pop-up closes, so set them again each time one opens or closes.
+  useEffect(() => {
+    setStatusBarStyle('light');
+  }, [pickerOpen, profileOpen, swimmersOpen, tab]);
+
+  // Android's back button goes from the leaderboard back to the map.
+  useEffect(() => {
+    if (tab !== 'leaderboard') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      openTab('map');
+      return true;
+    });
+    return () => sub.remove();
+  }, [tab]);
 
   function openTab(name) {
     setTab(name);
@@ -295,8 +312,20 @@ export default function TraceScreen() {
     );
   }
 
+  const tabs = (
+    <View style={styles.tabs}>
+      <Pressable style={[styles.tab, tab === 'map' && styles.tabOn]} onPress={() => openTab('map')}>
+        <Text style={[styles.tabText, tab === 'map' && styles.tabTextOn]}>🗺️ Map</Text>
+      </Pressable>
+      <Pressable style={[styles.tab, tab === 'leaderboard' && styles.tabOn]} onPress={() => openTab('leaderboard')}>
+        <Text style={[styles.tabText, tab === 'leaderboard' && styles.tabTextOn]}>🏆 Leaderboard</Text>
+      </Pressable>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
         {profile ? (
@@ -312,17 +341,7 @@ export default function TraceScreen() {
             {myAreas} {myAreas === 1 ? 'area' : 'areas'} held
           </Text>
         ) : null}
-        <View style={styles.tabs}>
-          <Pressable style={[styles.tab, tab === 'map' && styles.tabOn]} onPress={() => openTab('map')}>
-            <Text style={[styles.tabText, tab === 'map' && styles.tabTextOn]}>🗺️ Map</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tab, tab === 'leaderboard' && styles.tabOn]}
-            onPress={() => openTab('leaderboard')}
-          >
-            <Text style={[styles.tabText, tab === 'leaderboard' && styles.tabTextOn]}>🏆 Leaderboard</Text>
-          </Pressable>
-        </View>
+        {tabs}
       </View>
 
       <View style={styles.mapWrap}>
@@ -354,42 +373,9 @@ export default function TraceScreen() {
             </Pressable>
           </View>
         ) : null}
-        {tab === 'leaderboard' ? (
-          // Laid over the map, which stays loaded underneath.
-          <View style={styles.board}>
-            <Text style={styles.boardHelp}>
-              Ranked by the total outline of the land each swimmer holds right now. Lose land and
-              your total drops.
-            </Text>
-            {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
-            <FlatList
-              data={leaders ?? []}
-              keyExtractor={(row) => row.user_id}
-              refreshing={leaders === null && !leadersError}
-              onRefresh={loadLeaders}
-              ListEmptyComponent={
-                leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
-              }
-              renderItem={({ item, index }) => (
-                <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
-                  <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
-                  <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
-                  <View style={styles.areaInfo}>
-                    <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
-                    <Text style={styles.boardLine}>
-                      {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
-                      {(item.area_m2 / 1e6).toFixed(2)} km²
-                    </Text>
-                  </View>
-                  <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
-                </View>
-              )}
-            />
-          </View>
-        ) : null}
       </View>
 
-      <View style={[styles.panel, tab !== 'map' && styles.hidden]}>
+      <View style={styles.panel}>
         {pending ? (
           <View style={styles.pending}>
             <Text style={styles.pendingText}>
@@ -436,7 +422,45 @@ export default function TraceScreen() {
         </View>
       </View>
 
-      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+      {tab === 'leaderboard' ? (
+        // Covers the whole screen. The map stays loaded underneath.
+        <View style={styles.board}>
+          <View style={styles.header}>
+            <Text style={styles.title}>🏆 Leaderboard</Text>
+            {tabs}
+          </View>
+          <Text style={styles.boardHelp}>
+            Ranked by the total outline of the land each swimmer holds right now. Lose land and
+            your total drops.
+          </Text>
+          {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
+          <FlatList
+            data={leaders ?? []}
+            keyExtractor={(row) => row.user_id}
+            refreshing={leaders === null && !leadersError}
+            onRefresh={loadLeaders}
+            ListEmptyComponent={
+              leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
+            }
+            renderItem={({ item, index }) => (
+              <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
+                <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
+                <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
+                <View style={styles.areaInfo}>
+                  <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
+                  <Text style={styles.boardLine}>
+                    {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
+                    {(item.area_m2 / 1e6).toFixed(2)} km²
+                  </Text>
+                </View>
+                <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
+              </View>
+            )}
+          />
+        </View>
+      ) : null}
+
+      <Modal visible={pickerOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>How far do you want to swim?</Text>
@@ -458,6 +482,7 @@ export default function TraceScreen() {
       <Modal
         visible={profileOpen}
         transparent
+        statusBarTranslucent
         animationType="fade"
         onRequestClose={() => profile && setProfileOpen(false)}
       >
@@ -500,7 +525,7 @@ export default function TraceScreen() {
         </View>
       </Modal>
 
-      <Modal visible={swimmersOpen} transparent animationType="fade" onRequestClose={() => setSwimmersOpen(false)}>
+      <Modal visible={swimmersOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setSwimmersOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setSwimmersOpen(false)}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Playing as</Text>
@@ -594,13 +619,11 @@ const styles = StyleSheet.create({
   tabTextOn: {
     color: '#0B3D5C',
   },
-  hidden: {
-    display: 'none',
-  },
   board: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0B3D5C',
     paddingHorizontal: 16,
+    paddingBottom: 24,
   },
   boardHelp: {
     color: '#9FD3F0',
@@ -655,7 +678,8 @@ const styles = StyleSheet.create({
   },
   areaCard: {
     position: 'absolute',
-    top: 12,
+    // Below the 📍 button.
+    top: 72,
     left: 12,
     right: 12,
     flexDirection: 'row',
@@ -777,8 +801,7 @@ const styles = StyleSheet.create({
   locate: {
     position: 'absolute',
     left: 12,
-    // Sits above the Mapbox logo, which has to stay visible.
-    bottom: 40,
+    top: 12,
     width: 48,
     height: 48,
     borderRadius: 24,

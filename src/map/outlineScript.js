@@ -109,20 +109,30 @@ function largestOuterRing(feature) {
   return best;
 }
 
-// Cut the sea out of a shape (throwing SEA if nothing is left). Narrow water (river mouths, creeks) is bridged
-// straight across: the land is grown out by the bridge width then shrunk back,
-// which closes gaps narrower than that but leaves the coastline where it is.
-function trimToLand(ring, water, sizeMetres) {
+// Cut the sea out of a shape (throwing SEA if nothing is left). Rivers and
+// estuaries are cut straight across their mouths, in line with the coast: the
+// land is grown out by a wide margin then shrunk back, which closes inlets
+// narrower than about twice that margin but leaves the open coastline where
+// it is. view is the part of the map on screen, the only part whose water we
+// know about, so land is never assumed beyond it.
+function trimToLand(ring, water, sizeMetres, view) {
   const shape = turf.polygon([ring]);
   const overlapping = water.filter((w) => {
     try { return turf.booleanIntersects(shape, w); } catch (e) { return false; }
   });
   if (overlapping.length === 0) return { ring, trimmed: false };
 
-  // Work on a slightly bigger area than the shape, so bridging behaves the same
-  // right up to the shape's edge, then trim back to the shape at the end.
-  const bridgeKm = clamp(sizeMetres * 0.06, 30, 400) / 1000;
+  // Work on a bigger area than the shape, so bridging behaves the same right
+  // up to the shape's edge, then trim back to the shape at the end.
+  const bridgeKm = clamp(sizeMetres * 2, 40, 5000) / 1000;
   let land = turf.buffer(shape, bridgeKm * 2, { units: 'kilometers', steps: 4 });
+  if (view) {
+    try {
+      land = turf.intersect(turf.featureCollection([land, view])) || land;
+    } catch (e) {
+      // Keep the unclipped area.
+    }
+  }
   for (const w of overlapping) {
     let next;
     try {
@@ -136,8 +146,8 @@ function trimToLand(ring, water, sizeMetres) {
   }
 
   try {
-    const grown = turf.buffer(land, bridgeKm, { units: 'kilometers', steps: 6 });
-    const closed = turf.buffer(grown, -bridgeKm, { units: 'kilometers', steps: 6 });
+    const grown = turf.buffer(land, bridgeKm, { units: 'kilometers', steps: 12 });
+    const closed = turf.buffer(grown, -bridgeKm, { units: 'kilometers', steps: 12 });
     // Never reach outside the shape you drew.
     if (closed) land = closed;
   } catch (e) {
@@ -152,14 +162,15 @@ function trimToLand(ring, water, sizeMetres) {
   return outer ? { ring: outer, trimmed: true } : { ring, trimmed: false };
 }
 
-function finish(ring, water, sizeMetres) {
-  const result = trimToLand(ring, water, sizeMetres);
+function finish(ring, water, sizeMetres, view) {
+  const result = trimToLand(ring, water, sizeMetres, view);
   const perimeterKm = turf.length(turf.lineString(result.ring), { units: 'kilometers' });
   return { coords: result.ring, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
 }
 
-// loop: finger-drawn [lng, lat] points. water: water polygons near it.
-function shapeFromLoop(loop, water) {
+// loop: finger-drawn [lng, lat] points. water: water polygons on screen.
+// view: the on-screen area as a polygon.
+function shapeFromLoop(loop, water, view) {
   const pts = loop.slice();
   if (dist(pts[0], pts[pts.length - 1]) === 0) pts.pop();
   const proj = projector(pts[0]);
@@ -170,11 +181,11 @@ function shapeFromLoop(loop, water) {
   if (corners.length < 3) corners = simplifyClosed(xy, 0.03 * size);
   if (corners.length < 3) corners = xy.slice(0, 3);
   const rounded = roundCorners(corners, clamp(0.1 * size, 5, 150));
-  return finish(closeRing(rounded.map(proj.from)), water, size);
+  return finish(closeRing(rounded.map(proj.from)), water, size, view);
 }
 
 // A circle round the centre whose land boundary matches the target length.
-function circleShape(center, targetPerimeter, water) {
+function circleShape(center, targetPerimeter, water, view) {
   const proj = projector(center);
   let radius = targetPerimeter / (2 * Math.PI);
   let best = null;
@@ -187,7 +198,7 @@ function circleShape(center, targetPerimeter, water) {
     }
     let shape;
     try {
-      shape = finish(closeRing(ring), water, radius * 1.8);
+      shape = finish(closeRing(ring), water, radius * 1.8, view);
     } catch (e) {
       // A resized circle can miss the land; keep the best one found so far.
       if (best) break;
