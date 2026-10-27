@@ -158,13 +158,37 @@ function inletWithStraightMouth(piece, nearLand, inner) {
   }
   const mouthPts = pts.filter((x) => x.mouth);
   if (mouthPts.length === 0) return null;
-  // The mouth should be one stretch of the edge, not several.
-  let runs = 0;
-  for (let i = 0; i < n; i++) if (pts[i].mouth && !pts[(i + n - 1) % n].mouth) runs++;
-  if (runs > 1) return null;
-  const hull = mouthPts.length >= 3 ? turf.convex(turf.featureCollection(mouthPts.map((x) => x.p))) : null;
-  const ends = [mouthPts[0].p, mouthPts[mouthPts.length - 1].p];
-  const mouthWidth = Math.max(turf.distance(ends[0], ends[1], { units: 'meters' }), (lengthKm * 1000) / n);
+  // Group the mouth points into stretches of edge open to the sea.
+  const start = pts.findIndex((x, i) => x.mouth && !pts[(i + n - 1) % n].mouth);
+  const runs = [];
+  for (let k = 0; k < n; k++) {
+    const x = pts[(start + k) % n];
+    if (!x.mouth) continue;
+    const prev = pts[(start + k + n - 1) % n];
+    if (!prev.mouth || runs.length === 0) runs.push([]);
+    runs[runs.length - 1].push(x.p);
+  }
+  const width = (run) => turf.distance(run[0], run[run.length - 1], { units: 'meters' });
+  const straighten = (shape) => {
+    // Bridging leaves each mouth curved; fill it out to a straight line.
+    let out = shape;
+    for (const run of runs) {
+      if (run.length < 3) continue;
+      try {
+        out = turf.union(turf.featureCollection([out, turf.convex(turf.featureCollection(run))])) || out;
+      } catch (e) {
+        // Keep the curved mouth.
+      }
+    }
+    return out;
+  };
+  if (runs.length > 1) {
+    // Open to the sea at both ends: a narrow channel cutting off a bit of
+    // land, like a creek behind a small island. Bridge it if it's narrow.
+    const meanWidth = (2 * area) / (lengthKm * 1000);
+    return meanWidth <= 90 && runs.every((r) => width(r) <= 200) ? straighten(piece) : null;
+  }
+  const mouthWidth = Math.max(width(runs[0]), (lengthKm * 1000) / n);
   // How far the water reaches from its mouth.
   let depth = 0;
   for (const x of pts) {
@@ -181,13 +205,7 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     (depth >= inletDepthMetres && depth >= mouthWidth * 2.5) ||
     (depth >= Math.min(200, inletDepthMetres) && depth >= mouthWidth * 3) ||
     (offScreen && depth >= mouthWidth * 1.5);
-  if (!farEnough) return null;
-  // Bridging leaves the mouth curved; fill it out to a straight line.
-  try {
-    return hull ? turf.union(turf.featureCollection([piece, hull])) || piece : piece;
-  } catch (e) {
-    return piece;
-  }
+  return farEnough ? straighten(piece) : null;
 }
 
 // Cut the water out of a shape (throwing SEA if nothing is left), so its
