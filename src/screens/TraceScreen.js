@@ -18,6 +18,8 @@ import { getLeaderboard } from '../lib/leaderboard';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
+// A leaderboard row counts as on screen once most of it shows.
+const ROWS_SEEN = { itemVisiblePercentThreshold: 60 };
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
@@ -71,6 +73,36 @@ export default function TraceScreen() {
   const [tab, setTab] = useState('map');
   const [leaders, setLeaders] = useState(null);
   const [leadersError, setLeadersError] = useState(null);
+  const boardRef = useRef(null);
+  // The first and last leaderboard rows on screen, to know where yours is.
+  const [rowsSeen, setRowsSeen] = useState(null);
+  const onRowsSeen = useRef(({ viewableItems }) => {
+    const seen = viewableItems.map((v) => v.index);
+    setRowsSeen(seen.length ? { first: Math.min(...seen), last: Math.max(...seen) } : null);
+  }).current;
+  const myIndex = leaders ? leaders.findIndex((row) => row.mine) : -1;
+  let myPin = null;
+  if (myIndex >= 0 && rowsSeen) {
+    if (myIndex > rowsSeen.last) myPin = 'bottom';
+    else if (myIndex < rowsSeen.first) myPin = 'top';
+  }
+
+  function boardRow(item, index) {
+    return (
+      <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
+        <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
+        <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
+        <View style={styles.areaInfo}>
+          <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
+          <Text style={styles.boardLine}>
+            {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
+            {(item.area_m2 / 1e6).toFixed(2)} km²
+          </Text>
+        </View>
+        <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
+      </View>
+    );
+  }
   const [swimmersOpen, setSwimmersOpen] = useState(false);
   const [swimmers, setSwimmers] = useState([]);
   const [inletDepth, setInletDepth] = useState(2000);
@@ -451,29 +483,34 @@ export default function TraceScreen() {
               your total drops.
             </Text>
             {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
-            <FlatList
-              data={leaders ?? []}
-              keyExtractor={(row) => row.user_id}
-              refreshing={leaders === null && !leadersError}
-              onRefresh={loadLeaders}
-              ListEmptyComponent={
-                leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
-              }
-              renderItem={({ item, index }) => (
-                <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
-                  <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
-                  <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
-                  <View style={styles.areaInfo}>
-                    <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
-                    <Text style={styles.boardLine}>
-                      {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
-                      {(item.area_m2 / 1e6).toFixed(2)} km²
-                    </Text>
-                  </View>
-                  <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
-                </View>
-              )}
-            />
+            <View style={styles.boardList}>
+              <FlatList
+                ref={boardRef}
+                data={leaders ?? []}
+                keyExtractor={(row) => row.user_id}
+                refreshing={leaders === null && !leadersError}
+                onRefresh={loadLeaders}
+                onViewableItemsChanged={onRowsSeen}
+                viewabilityConfig={ROWS_SEEN}
+                onScrollToIndexFailed={({ index }) =>
+                  boardRef.current?.scrollToOffset({ offset: index * 80, animated: true })
+                }
+                ListEmptyComponent={
+                  leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
+                }
+                renderItem={({ item, index }) => boardRow(item, index)}
+              />
+              {/* Your own row stays in sight: pinned to the bottom while you're
+                  further down the list, to the top once you've scrolled past. */}
+              {myPin ? (
+                <Pressable
+                  style={[styles.boardPinned, myPin === 'top' ? { top: 0 } : { bottom: 0 }]}
+                  onPress={() => boardRef.current?.scrollToIndex({ index: myIndex, viewPosition: 0.5 })}
+                >
+                  {boardRow(leaders[myIndex], myIndex)}
+                </Pressable>
+              ) : null}
+            </View>
           </View>
         )}
       </View>
@@ -678,6 +715,16 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     marginBottom: 8,
+  },
+  boardList: {
+    flex: 1,
+  },
+  boardPinned: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: '#0B3D5C',
+    elevation: 8,
   },
   boardRowMine: {
     borderWidth: 2,
