@@ -8,7 +8,6 @@ import { ensureSignedIn, supabase, supabaseKey, supabaseUrl } from './supabase';
 // a separate person. Their sign-ins are kept on this phone only.
 
 const STORE_KEY = 'sharked.swimmers';
-export const MAX_SWIMMERS = 4;
 
 // [{ id, nickname, colour, session }] for every swimmer on this phone. The
 // session is only stored for swimmers that aren't the one in use, and is
@@ -65,8 +64,7 @@ export async function switchToSwimmer(id) {
 
 // Signs in a brand new pretend swimmer and switches to them.
 export async function addTestSwimmer() {
-  let list = await rememberCurrent(await load());
-  if (list.length >= MAX_SWIMMERS) throw new Error(`You can have up to ${MAX_SWIMMERS} swimmers on one phone.`);
+  const list = await rememberCurrent(await load());
   // A separate, throwaway client so the current swimmer stays signed in.
   const scratch = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
@@ -78,6 +76,5 @@ export async function addTestSwimmer() {
     refresh_token: data.session.refresh_token,
   });
   if (switchError) throw switchError;
-  list = [{ id: data.user.id }, ...list];
-  await store(list);
+  await store([{ id: data.user.id }, ...list]);
 }

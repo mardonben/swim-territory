@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BackHandler, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BackHandler, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { setStatusBarStyle, StatusBar } from 'expo-status-bar';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -12,7 +12,7 @@ import {
   lockInChallenge,
 } from '../lib/challenges';
 import { getMyProfile, isValidNickname, NICKNAME_RULE, saveMyProfile, SWIMMER_COLOURS } from '../lib/profile';
-import { addTestSwimmer, listSwimmers, MAX_SWIMMERS, switchToSwimmer } from '../lib/swimmers';
+import { addTestSwimmer, listSwimmers, switchToSwimmer } from '../lib/swimmers';
 import { getLeaderboard } from '../lib/leaderboard';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
@@ -529,20 +529,22 @@ export default function TraceScreen() {
         <Pressable style={styles.backdrop} onPress={() => setSwimmersOpen(false)}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Playing as</Text>
-            {swimmers.map((s) => (
-              <Pressable
-                key={s.id}
-                style={styles.swimmerRow}
-                disabled={s.current || saving}
-                onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
-              >
-                <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
-                <Text style={[styles.optionText, s.current && styles.optionChosen]}>
-                  {s.nickname}
-                  {s.current ? '  ✓' : ''}
-                </Text>
-              </Pressable>
-            ))}
+            <ScrollView style={styles.swimmerList}>
+              {swimmers.map((s) => (
+                <Pressable
+                  key={s.id}
+                  style={styles.swimmerRow}
+                  disabled={s.current || saving}
+                  onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
+                >
+                  <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
+                  <Text style={[styles.optionText, s.current && styles.optionChosen]}>
+                    {s.nickname}
+                    {s.current ? '  ✓' : ''}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
             <Pressable
               style={styles.swimmerRow}
               onPress={() => {
@@ -552,15 +554,13 @@ export default function TraceScreen() {
             >
               <Text style={styles.optionText}>✏️ Change nickname or colour</Text>
             </Pressable>
-            {swimmers.length < MAX_SWIMMERS ? (
-              <Pressable
-                style={styles.swimmerRow}
-                disabled={saving}
-                onPress={() => changeSwimmer(addTestSwimmer)}
-              >
-                <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
-              </Pressable>
-            ) : null}
+            <Pressable
+              style={styles.swimmerRow}
+              disabled={saving}
+              onPress={() => changeSwimmer(addTestSwimmer)}
+            >
+              <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
+            </Pressable>
             <Text style={[styles.cardHelp, styles.sheetHelp]}>
               Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
               up in their own colour, stealing land like a real swimmer would.
@@ -671,6 +671,10 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 18,
     fontWeight: 'bold',
+  },
+  swimmerList: {
+    flexGrow: 0,
+    maxHeight: 280,
   },
   sheetHelp: {
     paddingHorizontal: 24,

@@ -61,7 +61,7 @@ The **🏆 Leaderboard** tab ranks swimmers by the total outline of the land the
 
 ## Pretend swimmers (testing)
 
-Tap your nickname at the top to see who you're playing as. **➕ Add a pretend swimmer** creates another swimmer on the same phone (up to 4 in all), with its own nickname, colour and pending challenge. Switch between them from the same menu to draw areas as different people and watch them steal land from each other. Each pretend swimmer is a separate anonymous sign-in, kept on this phone only.
+Tap your nickname at the top to see who you're playing as. **➕ Add a pretend swimmer** creates another swimmer on the same phone (as many as you like), with its own nickname, colour and pending challenge. Switch between them from the same menu to draw areas as different people and watch them steal land from each other. Each pretend swimmer is a separate anonymous sign-in, kept on this phone only.
 
 ## Build plan
 
