@@ -173,8 +173,13 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     for (const m of mouthPts) nearest = Math.min(nearest, turf.distance(x.p, m.p, { units: 'meters' }));
     depth = Math.max(depth, nearest);
   }
-  // Off screen it might go anywhere, but it must at least be river-shaped.
-  const farEnough = depth >= inletDepthMetres || (offScreen && depth >= mouthWidth * 1.5);
+  // Long rivers and estuaries; or a narrow creek that runs in at least 500 m
+  // and three times its mouth width. Off screen it might go anywhere, but it
+  // must at least be river-shaped.
+  const farEnough =
+    depth >= inletDepthMetres ||
+    (depth >= Math.min(500, inletDepthMetres) && depth >= mouthWidth * 3) ||
+    (offScreen && depth >= mouthWidth * 1.5);
   if (!farEnough) return null;
   // Bridging leaves the mouth curved; fill it out to a straight line.
   try {
@@ -246,7 +251,11 @@ function trimToLand(ring, water, sizeMetres, view) {
         const nearLand = turf.buffer(land, 0.015, { units: 'kilometers', steps: 2 });
         for (const piece of polygonsOf(filled)) {
           const inlet = inletWithStraightMouth(piece, nearLand, inner);
-          if (inlet) land = turf.union(turf.featureCollection([land, inlet])) || land;
+          // Grown a touch so no hairline gap is left along the banks.
+          if (inlet) {
+            const padded = turf.buffer(inlet, 0.004, { units: 'kilometers', steps: 2 });
+            land = turf.union(turf.featureCollection([land, padded])) || land;
+          }
         }
       } catch (e) {
         // Bridging is a nicety; the trimmed land is still right.
