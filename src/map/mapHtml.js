@@ -166,6 +166,10 @@ ${outlineScript}
     resize() {
       map.resize();
     },
+    // Water narrower than this many metres is cut straight across.
+    setBridge(metres) {
+      bridgeMetres = metres;
+    },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { setStatusBarStyle, StatusBar } from 'expo-status-bar';
 import { WebView } from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
 import {
@@ -20,6 +21,10 @@ const LONDON = [-0.1276, 51.5072];
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
+// Test setting: rivers and creeks narrower than this are cut straight across
+// instead of followed. 0 always follows the water.
+const BRIDGE_CHOICES = [0, 50, 100, 200, 300, 500, 750, 1000];
+const BRIDGE_KEY = 'sharked.bridgeMetres';
 const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
 
 function formatDate(iso) {
@@ -67,6 +72,7 @@ export default function TraceScreen() {
   const [leadersError, setLeadersError] = useState(null);
   const [swimmersOpen, setSwimmersOpen] = useState(false);
   const [swimmers, setSwimmers] = useState([]);
+  const [bridge, setBridge] = useState(200);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -118,6 +124,9 @@ export default function TraceScreen() {
     if (!mapReady) return;
     goToMe().catch(() => {});
     loadSwimmer();
+    AsyncStorage.getItem(BRIDGE_KEY)
+      .then((saved) => saved !== null && chooseBridge(Number(saved)))
+      .catch(() => {});
   }, [mapReady]);
 
   // Everything that belongs to the swimmer using the app right now.
@@ -158,6 +167,12 @@ export default function TraceScreen() {
     });
     return () => sub.remove();
   }, [tab]);
+
+  function chooseBridge(metres) {
+    setBridge(metres);
+    run(`window.swimMap.setBridge(${metres})`);
+    AsyncStorage.setItem(BRIDGE_KEY, String(metres)).catch(() => {});
+  }
 
   function openTab(name) {
     setTab(name);
@@ -527,44 +542,58 @@ export default function TraceScreen() {
 
       <Modal visible={swimmersOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setSwimmersOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setSwimmersOpen(false)}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>Playing as</Text>
-            <ScrollView style={styles.swimmerList}>
-              {swimmers.map((s) => (
-                <Pressable
-                  key={s.id}
-                  style={styles.swimmerRow}
-                  disabled={s.current || saving}
-                  onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
-                >
-                  <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
-                  <Text style={[styles.optionText, s.current && styles.optionChosen]}>
-                    {s.nickname}
-                    {s.current ? '  ✓' : ''}
-                  </Text>
-                </Pressable>
-              ))}
+          <View style={[styles.sheet, styles.tallSheet]}>
+            <ScrollView>
+              <Text style={styles.sheetTitle}>Playing as</Text>
+              <View>
+                {swimmers.map((s) => (
+                  <Pressable
+                    key={s.id}
+                    style={styles.swimmerRow}
+                    disabled={s.current || saving}
+                    onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
+                  >
+                    <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
+                    <Text style={[styles.optionText, s.current && styles.optionChosen]}>
+                      {s.nickname}
+                      {s.current ? '  ✓' : ''}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                style={styles.swimmerRow}
+                onPress={() => {
+                  setSwimmersOpen(false);
+                  editProfile(profile);
+                }}
+              >
+                <Text style={styles.optionText}>✏️ Change nickname or colour</Text>
+              </Pressable>
+              <Pressable
+                style={styles.swimmerRow}
+                disabled={saving}
+                onPress={() => changeSwimmer(addTestSwimmer)}
+              >
+                <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
+              </Pressable>
+              <Text style={[styles.cardHelp, styles.sheetHelp]}>
+                Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
+                up in their own colour, stealing land like a real swimmer would.
+              </Text>
+              <Text style={[styles.optionText, styles.settingTitle]}>🌊 Cut straight across water narrower than</Text>
+              <View style={styles.chips}>
+                {BRIDGE_CHOICES.map((m) => (
+                  <Pressable key={m} style={[styles.chip, m === bridge && styles.chipOn]} onPress={() => chooseBridge(m)}>
+                    <Text style={[styles.chipText, m === bridge && styles.chipTextOn]}>{m === 0 ? 'Off' : `${m} m`}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={[styles.cardHelp, styles.sheetHelp]}>
+                Rivers and creeks narrower than this are cut across where they get that narrow. Wider water
+                is followed. Applies to the next shape you draw.
+              </Text>
             </ScrollView>
-            <Pressable
-              style={styles.swimmerRow}
-              onPress={() => {
-                setSwimmersOpen(false);
-                editProfile(profile);
-              }}
-            >
-              <Text style={styles.optionText}>✏️ Change nickname or colour</Text>
-            </Pressable>
-            <Pressable
-              style={styles.swimmerRow}
-              disabled={saving}
-              onPress={() => changeSwimmer(addTestSwimmer)}
-            >
-              <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
-            </Pressable>
-            <Text style={[styles.cardHelp, styles.sheetHelp]}>
-              Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
-              up in their own colour, stealing land like a real swimmer would.
-            </Text>
           </View>
         </Pressable>
       </Modal>
@@ -672,9 +701,38 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
   },
-  swimmerList: {
-    flexGrow: 0,
-    maxHeight: 280,
+  settingTitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 16,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 16,
+  },
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#E8F4FB',
+  },
+  chipOn: {
+    backgroundColor: '#0B3D5C',
+  },
+  chipText: {
+    color: '#0B3D5C',
+    fontSize: 14,
+  },
+  chipTextOn: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  tallSheet: {
+    maxHeight: '85%',
   },
   sheetHelp: {
     paddingHorizontal: 24,

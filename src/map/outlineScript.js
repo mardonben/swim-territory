@@ -125,14 +125,31 @@ function joinWater(water) {
   return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((c) => turf.polygon(c));
 }
 
+// Water narrower than this is cut straight across instead of followed, so a
+// shape doesn't run up rivers and creeks. 0 means always follow the water.
+// The app can change it (see swimMap.setBridge).
+let bridgeMetres = 200;
+
 // Cut the water out of a shape (throwing SEA if nothing is left), so its
-// outline always runs along land and never out into the sea or up a river.
-// The one exception is water completely surrounded by land, like a lake or
-// pond: that counts as part of the territory. Water that runs off the edge of
-// the screen isn't surrounded, so it's always cut out. view is the part of the
-// map on screen.
+// outline runs along the land and never out into the sea. Two exceptions:
+// water completely surrounded by land, like a lake or pond, counts as part of
+// the territory; and any river, creek or inlet narrower than bridgeMetres is
+// cut straight across where it gets that narrow. Water that runs off the edge
+// of the screen isn't surrounded, so it's always cut out. view is the part of
+// the map on screen.
 function trimToLand(ring, water, view) {
   const shape = turf.polygon([ring]);
+  const bridgeKm = bridgeMetres / 1000;
+  // Look a little past the shape, so a river crossing its edge is bridged the
+  // same as one inside it.
+  let area = bridgeKm > 0 ? turf.buffer(shape, bridgeKm, { units: 'kilometers', steps: 4 }) : shape;
+  if (view && bridgeKm > 0) {
+    try {
+      area = turf.intersect(turf.featureCollection([area, view])) || area;
+    } catch (e) {
+      // Keep the unclipped area.
+    }
+  }
   const edge = view ? turf.polygonToLine(view) : null;
   const toCut = joinWater(water).filter((w) => {
     try {
@@ -146,7 +163,7 @@ function trimToLand(ring, water, view) {
   });
   if (toCut.length === 0) return { ring, trimmed: false };
 
-  let land = shape;
+  let land = area;
   for (const w of toCut) {
     let next;
     try {
@@ -157,10 +174,25 @@ function trimToLand(ring, water, view) {
     if (!next) throw new Error(SEA); // nothing but water
     land = next;
   }
-  // Too little land to swim for: just a sliver of beach or a jetty.
-  if (turf.area(land) < turf.area(shape) * 0.02) throw new Error(SEA);
 
-  const outer = largestOuterRing(land);
+  if (bridgeKm > 0) {
+    // Grow the land by half the bridge width then shrink it back: any water
+    // narrower than the bridge closes up, wider water is left as it was.
+    try {
+      const grown = turf.buffer(land, bridgeKm / 2, { units: 'kilometers', steps: 12 });
+      const closed = turf.buffer(grown, -bridgeKm / 2, { units: 'kilometers', steps: 12 });
+      if (closed) land = closed;
+    } catch (e) {
+      // Bridging is a nicety; the trimmed land is still right.
+    }
+  }
+
+  // Never reach outside the shape you drew.
+  const kept = turf.intersect(turf.featureCollection([land, shape]));
+  // Too little land to swim for: just a sliver of beach or a jetty.
+  if (!kept || turf.area(kept) < turf.area(shape) * 0.02) throw new Error(SEA);
+
+  const outer = largestOuterRing(kept);
   return outer ? { ring: outer, trimmed: true } : { ring, trimmed: false };
 }
 
