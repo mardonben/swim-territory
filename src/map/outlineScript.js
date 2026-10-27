@@ -97,8 +97,9 @@ function closeRing(coords) {
 
 // The pieces of a (multi)polygon as outer rings only, so lakes inside a
 // territory still count as territory. When water splits a shape (a wide bay,
-// a river), every real piece is kept; slivers under a tenth of the biggest
-// piece are dropped. Biggest first.
+// a river), every real piece is kept. Small offshore islands and slivers
+// (under a tenth of the biggest piece, or under 0.25 km²) are dropped.
+// Biggest first.
 function outerRings(feature) {
   const g = feature.geometry;
   const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
@@ -106,7 +107,9 @@ function outerRings(feature) {
     .map((poly) => ({ ring: poly[0], area: turf.area(turf.polygon([poly[0]])) }))
     .sort((a, b) => b.area - a.area);
   if (pieces.length === 0) return [];
-  return pieces.filter((p) => p.area >= pieces[0].area * 0.1).map((p) => p.ring);
+  return pieces
+    .filter((p, i) => i === 0 || (p.area >= pieces[0].area * 0.1 && p.area >= 250000))
+    .map((p) => p.ring);
 }
 
 // Joins the water pieces drawn on screen (the map hands them over tile by
@@ -182,12 +185,9 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     }
     return out;
   };
-  if (runs.length > 1) {
-    // Open to the sea at both ends: a narrow channel cutting off a bit of
-    // land, like a creek behind a small island. Bridge it if it's narrow.
-    const meanWidth = (2 * area) / (lengthKm * 1000);
-    return meanWidth <= 90 && runs.every((r) => width(r) <= 200) ? straighten(piece) : null;
-  }
+  // Open to the sea at more than one place: water running round an
+  // offshore island. Islands are left out, so the coast is followed.
+  if (runs.length > 1) return null;
   const mouthWidth = Math.max(width(runs[0]), (lengthKm * 1000) / n);
   // How far the water reaches from its mouth.
   let depth = 0;
