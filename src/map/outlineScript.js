@@ -4,7 +4,7 @@
 // Territory shapes ignore roads. A drawn loop is tidied into the shape you
 // meant (draw a rectangle, get a rectangle) with rounded corners; the swim
 // picker makes a circle. Either way the shape is then trimmed to the land, so
-// it never runs out to sea, and bridged straight across river mouths.
+// it never runs out to sea or up a river; only lakes inside land are kept.
 
 export const outlineScript = `
 const M_PER_DEG_LAT = 110540;
@@ -109,109 +109,63 @@ function largestOuterRing(feature) {
   return best;
 }
 
-function closeGaps(area, km, steps) {
-  const grown = turf.buffer(area, km, { units: 'kilometers', steps });
-  return turf.buffer(grown, -km, { units: 'kilometers', steps });
-}
-
-function polygonsOf(feature) {
-  const g = feature.geometry;
+// Joins the water pieces drawn on screen (the map hands them over tile by
+// tile) into whole seas, rivers and lakes.
+function joinWater(water) {
+  let joined = null;
+  for (const w of water) {
+    try {
+      joined = joined ? turf.union(turf.featureCollection([joined, w])) || joined : w;
+    } catch (e) {
+      // Skip a piece turf can't handle rather than failing the shape.
+    }
+  }
+  if (!joined) return [];
+  const g = joined.geometry;
   return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((c) => turf.polygon(c));
 }
 
-// True for a river, estuary or narrow inlet: water mostly hemmed in by land,
-// with a mouth that's small next to its banks. A bay or a gentle curve of the
-// coast is mostly open to the sea, so it isn't.
-function isInlet(piece, nearLand, inner) {
-  const edge = turf.lineString(piece.geometry.coordinates[0]);
-  const length = turf.length(edge, { units: 'kilometers' });
-  const area = turf.area(piece);
-  // Thin slivers along the coast are just rounding left by the bridging.
-  if (area < 400 || (2 * area) / (length * 1000) < 15) return false;
-  const samples = 120;
-  let banks = 0;
-  for (let i = 0; i < samples; i++) {
-    const p = turf.along(edge, (length * i) / samples, { units: 'kilometers' });
-    // The edge of the map we know about counts as bank, not open sea.
-    if (turf.booleanPointInPolygon(p, nearLand) || !turf.booleanPointInPolygon(p, inner)) banks++;
-  }
-  return banks / samples > 0.7;
-}
-
-// Cut the sea out of a shape (throwing SEA if nothing is left). The result
-// follows the coastline closely, but rivers, estuaries and narrow inlets are
-// cut straight across their mouths, in line with the coast. view is the part
-// of the map on screen, the only part whose water we know about, so land is
-// never assumed beyond it.
-function trimToLand(ring, water, sizeMetres, view) {
+// Cut the water out of a shape (throwing SEA if nothing is left), so its
+// outline always runs along land and never out into the sea or up a river.
+// The one exception is water completely surrounded by land, like a lake or
+// pond: that counts as part of the territory. Water that runs off the edge of
+// the screen isn't surrounded, so it's always cut out. view is the part of the
+// map on screen.
+function trimToLand(ring, water, view) {
   const shape = turf.polygon([ring]);
-  const overlapping = water.filter((w) => {
-    try { return turf.booleanIntersects(shape, w); } catch (e) { return false; }
-  });
-  if (overlapping.length === 0) return { ring, trimmed: false };
-
-  // Work on a bigger area than the shape, so bridging behaves the same right
-  // up to the shape's edge, then trim back to the shape at the end.
-  const bridgeKm = clamp(sizeMetres * 2, 40, 5000) / 1000;
-  let area = turf.buffer(shape, bridgeKm * 2, { units: 'kilometers', steps: 4 });
-  if (view) {
+  const edge = view ? turf.polygonToLine(view) : null;
+  const toCut = joinWater(water).filter((w) => {
     try {
-      area = turf.intersect(turf.featureCollection([area, view])) || area;
+      if (!turf.booleanIntersects(shape, w)) return false;
+      // Within 20 m of the screen edge means it carries on off screen.
+      const enclosed = edge && !turf.booleanIntersects(turf.buffer(w, 0.02, { units: 'kilometers', steps: 2 }), edge);
+      return !enclosed;
     } catch (e) {
-      // Keep the unclipped area.
+      return true;
     }
-  }
-  let land = area;
-  for (const w of overlapping) {
+  });
+  if (toCut.length === 0) return { ring, trimmed: false };
+
+  let land = shape;
+  for (const w of toCut) {
     let next;
     try {
       next = turf.difference(turf.featureCollection([land, w]));
     } catch (e) {
-      // Skip a water piece turf can't handle rather than failing the shape.
       continue;
     }
     if (!next) throw new Error(SEA); // nothing but water
     land = next;
   }
-
-  // Only tiny gaps (creeks, harbour walls) are smoothed everywhere, so the
-  // shape hugs the coast.
-  let result = land;
-  try {
-    result = closeGaps(land, clamp(sizeMetres * 0.02, 10, 60) / 1000, 8) || land;
-  } catch (e) {
-    // Keep the unsmoothed land.
-  }
-
-  // A wide bridge fills every inlet the shape touches. Keep only the fills
-  // that are rivers or estuaries, and leave bays and coves as sea.
-  try {
-    let closed = closeGaps(land, bridgeKm, 12);
-    // Rounding in the bridging can poke past the edge; trim that off.
-    closed = closed && turf.intersect(turf.featureCollection([closed, area]));
-    const filled = closed && turf.difference(turf.featureCollection([closed, land]));
-    if (filled) {
-      const nearLand = turf.buffer(land, 0.015, { units: 'kilometers', steps: 2 });
-      const inner = turf.buffer(area, -0.015, { units: 'kilometers', steps: 2 });
-      for (const piece of polygonsOf(filled)) {
-        if (isInlet(piece, nearLand, inner)) result = turf.union(turf.featureCollection([result, piece])) || result;
-      }
-    }
-  } catch (e) {
-    // Bridging is a nicety; the sea-trimmed shape is still right.
-  }
-
-  // Never reach outside the shape you drew.
-  const kept = turf.intersect(turf.featureCollection([result, shape]));
   // Too little land to swim for: just a sliver of beach or a jetty.
-  if (!kept || turf.area(kept) < turf.area(shape) * 0.02) throw new Error(SEA);
+  if (turf.area(land) < turf.area(shape) * 0.02) throw new Error(SEA);
 
-  const outer = largestOuterRing(kept);
+  const outer = largestOuterRing(land);
   return outer ? { ring: outer, trimmed: true } : { ring, trimmed: false };
 }
 
 function finish(ring, water, sizeMetres, view) {
-  const result = trimToLand(ring, water, sizeMetres, view);
+  const result = trimToLand(ring, water, view);
   const perimeterKm = turf.length(turf.lineString(result.ring), { units: 'kilometers' });
   return { coords: result.ring, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
 }

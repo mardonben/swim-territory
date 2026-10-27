@@ -39,7 +39,7 @@ Each time you want to try the latest version:
 - **🏊 Pick a swim** lets you choose 25 m to 10 km. The app draws a circle from the middle of the map, sized so its boundary matches that swim.
 - **🗑️ Clear** starts over.
 
-Shapes never go out to sea: they follow the coastline closely (bays and coves stay sea), but rivers, estuaries and narrow inlets are cut straight across their mouths, in line with the coast. A new area is zoomed to fit the map. An area that is all sea is refused. The swim is set by the land outline the app draws (including the stretch along the coast), not by your finger trace. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
+Shapes always stop at land: they never go into the sea, a bay or a river. The only water a shape can include is water completely surrounded by land, like a lake or pond. Water that runs off the edge of the screen counts as sea. If a river splits a shape, the bigger side is kept. A new area is zoomed to fit the map. An area that is all sea is refused. The swim is set by the land outline the app draws (including the stretch along the coast), not by your finger trace. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
 
 ## Locking in a challenge (needs Supabase, one-time setup)
 
@@ -57,7 +57,7 @@ The first time you open the app it asks for a nickname and a map colour. Only th
 
 ## Leaderboard
 
-The **🏆 Leaderboard** tab ranks swimmers by the total outline of the land they hold right now, with their number of areas and area in km². Because the newest claim cuts into older land, a swimmer's total changes as soon as someone takes part of their territory. It replaces the map below the header; tap **🗺️ Map** at the top (or Android back) to return. Pull down to refresh.
+The **🏆 Leaderboard** tab ranks swimmers by the total outline of the land they hold right now, with their number of areas and area in km². Because the newest claim cuts into older land, a swimmer's total changes as soon as someone takes part of their territory. It is a separate page with no map; tap **🗺️ Map** at the top (or Android back) to return. Pull down to refresh.
 
 ## Pretend swimmers (testing)
 

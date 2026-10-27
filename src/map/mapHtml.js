@@ -163,6 +163,9 @@ ${outlineScript}
       setLine('trace', []);
       setShape([]);
     },
+    resize() {
+      map.resize();
+    },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },

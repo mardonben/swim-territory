@@ -163,6 +163,8 @@ export default function TraceScreen() {
     setTab(name);
     setTapped(null);
     if (name === 'leaderboard') loadLeaders();
+    // The map was hidden; let it fill its space again.
+    else setTimeout(() => run('window.swimMap.resize()'), 50);
   }
 
   async function openSwimmers() {
@@ -345,7 +347,8 @@ export default function TraceScreen() {
       </View>
 
       <View style={styles.body}>
-        <View style={styles.mapWrap}>
+        {/* Kept loaded but hidden on the leaderboard page, so the map doesn't reload. */}
+        <View style={[styles.mapWrap, tab !== 'map' && styles.hidden]}>
           <WebView
             ref={webview}
             style={styles.map}
@@ -376,54 +379,54 @@ export default function TraceScreen() {
           ) : null}
         </View>
 
-        <View style={styles.panel}>
-          {pending ? (
-            <View style={styles.pending}>
-              <Text style={styles.pendingText}>
-                🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
-              </Text>
-              <Pressable onPress={cancelPending} disabled={saving}>
-                <Text style={styles.pendingCancel}>Cancel</Text>
+        {tab === 'map' ? (
+          <View style={styles.panel}>
+            {pending ? (
+              <View style={styles.pending}>
+                <Text style={styles.pendingText}>
+                  🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
+                </Text>
+                <Pressable onPress={cancelPending} disabled={saving}>
+                  <Text style={styles.pendingCancel}>Cancel</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {pending ? (
+              <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
+                <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
+              </Pressable>
+            ) : null}
+            {shape ? (
+              <>
+                <Text style={styles.label}>Swim to claim it</Text>
+                <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
+                <Text style={styles.lengths}>
+                  about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
+                  {formatDistance(shape.perimeterMetres)}
+                </Text>
+              </>
+            ) : null}
+            <Text style={styles.status}>{status}</Text>
+            {shape && !pending ? (
+              <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
+                <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
+              </Pressable>
+            ) : null}
+            {shape && pending ? (
+              <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
+            ) : null}
+            <View style={styles.buttons}>
+              <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
+                <Text style={styles.buttonText}>
+                  🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
+                </Text>
+              </Pressable>
+              <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
+                <Text style={styles.buttonText}>🗑️ Clear</Text>
               </Pressable>
             </View>
-          ) : null}
-          {pending ? (
-            <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
-              <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
-            </Pressable>
-          ) : null}
-          {shape ? (
-            <>
-              <Text style={styles.label}>Swim to claim it</Text>
-              <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
-              <Text style={styles.lengths}>
-                about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
-                {formatDistance(shape.perimeterMetres)}
-              </Text>
-            </>
-          ) : null}
-          <Text style={styles.status}>{status}</Text>
-          {shape && !pending ? (
-            <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
-              <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
-            </Pressable>
-          ) : null}
-          {shape && pending ? (
-            <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
-          ) : null}
-          <View style={styles.buttons}>
-            <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
-              <Text style={styles.buttonText}>
-                🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
-              </Text>
-            </Pressable>
-            <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
-              <Text style={styles.buttonText}>🗑️ Clear</Text>
-            </Pressable>
           </View>
-        </View>
-        {tab === 'leaderboard' ? (
-          // Covers everything below the header. The map stays loaded underneath.
+        ) : (
           <View style={styles.board}>
             <Text style={styles.boardHelp}>
               Ranked by the total outline of the land each swimmer holds right now. Lose land and
@@ -454,7 +457,7 @@ export default function TraceScreen() {
               )}
             />
           </View>
-        ) : null}
+        )}
       </View>
 
       <Modal visible={pickerOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
@@ -619,8 +622,11 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
+  hidden: {
+    display: 'none',
+  },
   board: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     backgroundColor: '#0B3D5C',
     paddingHorizontal: 16,
     paddingBottom: 24,
