@@ -97,8 +97,8 @@ function closeRing(coords) {
 
 // The pieces of a (multi)polygon as outer rings only, so lakes inside a
 // territory still count as territory. When water splits a shape (a wide bay,
-// a river), every real piece is kept. Small offshore islands and slivers
-// (under a tenth of the biggest piece, or under 0.25 km²) are dropped.
+// a river), every real piece is kept. Slivers (under a tenth of the biggest
+// piece, or under 0.25 km²) are dropped.
 // Biggest first.
 function outerRings(feature) {
   const g = feature.geometry;
@@ -134,6 +134,9 @@ function joinWater(water) {
 // means always follow the water. The app can change it (see
 // swimMap.setInletDepth).
 let inletDepthMetres = 2000;
+
+// Offshore islands smaller than this (1500 m x 1500 m) are ignored.
+const ISLAND_MIN_SQ_METRES = 2200000;
 
 function polygonsOf(feature) {
   const g = feature.geometry;
@@ -252,6 +255,19 @@ function trimToLand(ring, water, sizeMetres, view) {
     }
     if (!next) throw new Error(SEA); // nothing but water
     land = next;
+  }
+
+  // Islands smaller than about 1.5 km x 1.5 km count as sea, so the outline
+  // follows the mainland coast. An island is land that doesn't reach the edge
+  // of the area being looked at.
+  try {
+    const areaEdge = turf.polygonToLine(area);
+    const keep = polygonsOf(land).filter((p) =>
+      turf.area(p) >= ISLAND_MIN_SQ_METRES || turf.booleanIntersects(p, areaEdge));
+    if (keep.length === 0) throw new Error(SEA);
+    land = turf.multiPolygon(keep.map((p) => p.geometry.coordinates));
+  } catch (e) {
+    if (e.message === SEA) throw e;
   }
 
   if (inletDepthMetres > 0) {
