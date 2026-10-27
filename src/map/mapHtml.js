@@ -166,9 +166,9 @@ ${outlineScript}
     resize() {
       map.resize();
     },
-    // Water narrower than this many metres is cut straight across.
-    setBridge(metres) {
-      bridgeMetres = metres;
+    // How far inland water must run, for its mouth width, to be cut across.
+    setInletRatio(ratio) {
+      inletRatio = ratio;
     },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });

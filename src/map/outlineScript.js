@@ -125,37 +125,85 @@ function joinWater(water) {
   return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((c) => turf.polygon(c));
 }
 
-// Water narrower than this is cut straight across instead of followed, so a
-// shape doesn't run up rivers and creeks. 0 means always follow the water.
-// The app can change it (see swimMap.setBridge).
-let bridgeMetres = 200;
+// How far inland water has to run, compared with how wide its mouth is, for
+// the shape to cut straight across the mouth instead of following it in.
+// Rivers and estuaries run far inland; coves and bays are about as deep as
+// they are wide, so they're followed. 0 means always follow the water. The
+// app can change it (see swimMap.setInletRatio).
+let inletRatio = 1.5;
+
+function polygonsOf(feature) {
+  const g = feature.geometry;
+  return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((c) => turf.polygon(c));
+}
+
+// A piece of water that the land closes around. Its edge is bank (land), the
+// edge of the screen, or its mouth (open to the sea). If it runs far enough
+// inland for its mouth, returns it with the mouth straightened; otherwise null.
+function inletWithStraightMouth(piece, nearLand, inner) {
+  const area = turf.area(piece);
+  if (area < 200) return null;
+  const edge = turf.lineString(piece.geometry.coordinates[0]);
+  const lengthKm = turf.length(edge, { units: 'kilometers' });
+  const n = 160;
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const p = turf.along(edge, (lengthKm * i) / n, { units: 'kilometers' });
+    const mouth = !turf.booleanPointInPolygon(p, nearLand) && turf.booleanPointInPolygon(p, inner);
+    pts.push({ p, mouth });
+  }
+  const mouthPts = pts.filter((x) => x.mouth);
+  if (mouthPts.length === 0) return null;
+  // The mouth should be one stretch of the edge, not several.
+  let runs = 0;
+  for (let i = 0; i < n; i++) if (pts[i].mouth && !pts[(i + n - 1) % n].mouth) runs++;
+  if (runs > 1) return null;
+  const hull = mouthPts.length >= 3 ? turf.convex(turf.featureCollection(mouthPts.map((x) => x.p))) : null;
+  const ends = [mouthPts[0].p, mouthPts[mouthPts.length - 1].p];
+  const mouthWidth = Math.max(turf.distance(ends[0], ends[1], { units: 'meters' }), (lengthKm * 1000) / n);
+  // How far the water reaches from its mouth.
+  let depth = 0;
+  for (const x of pts) {
+    if (x.mouth) continue;
+    let nearest = Infinity;
+    for (const m of mouthPts) nearest = Math.min(nearest, turf.distance(x.p, m.p, { units: 'meters' }));
+    depth = Math.max(depth, nearest);
+  }
+  if (depth < inletRatio * mouthWidth) return null;
+  // Bridging leaves the mouth curved; fill it out to a straight line.
+  try {
+    return hull ? turf.union(turf.featureCollection([piece, hull])) || piece : piece;
+  } catch (e) {
+    return piece;
+  }
+}
 
 // Cut the water out of a shape (throwing SEA if nothing is left), so its
 // outline runs along the land and never out into the sea. Two exceptions:
 // water completely surrounded by land, like a lake or pond, counts as part of
-// the territory; and any river, creek or inlet narrower than bridgeMetres is
-// cut straight across where it gets that narrow. Water that runs off the edge
-// of the screen isn't surrounded, so it's always cut out. view is the part of
-// the map on screen.
-function trimToLand(ring, water, view) {
+// the territory; and a river, estuary or creek that runs well inland is cut
+// straight across its mouth, in line with the coast. Coves and bays are
+// followed. Water that runs off the edge of the screen isn't surrounded, so
+// it's always cut out. view is the part of the map on screen.
+function trimToLand(ring, water, sizeMetres, view) {
   const shape = turf.polygon([ring]);
-  const bridgeKm = bridgeMetres / 1000;
-  // Look a little past the shape, so a river crossing its edge is bridged the
-  // same as one inside it.
-  let area = bridgeKm > 0 ? turf.buffer(shape, bridgeKm, { units: 'kilometers', steps: 4 }) : shape;
-  if (view && bridgeKm > 0) {
+  const reachKm = clamp(sizeMetres * 2, 50, 5000) / 1000;
+  // Look well past the shape, so a river is judged by its whole length on
+  // screen, not just the part inside the shape.
+  let area = inletRatio > 0 ? turf.buffer(shape, reachKm, { units: 'kilometers', steps: 4 }) : shape;
+  if (view && inletRatio > 0) {
     try {
       area = turf.intersect(turf.featureCollection([area, view])) || area;
     } catch (e) {
       // Keep the unclipped area.
     }
   }
-  const edge = view ? turf.polygonToLine(view) : null;
+  const screenEdge = view ? turf.polygonToLine(view) : null;
   const toCut = joinWater(water).filter((w) => {
     try {
       if (!turf.booleanIntersects(shape, w)) return false;
       // Within 20 m of the screen edge means it carries on off screen.
-      const enclosed = edge && !turf.booleanIntersects(turf.buffer(w, 0.02, { units: 'kilometers', steps: 2 }), edge);
+      const enclosed = screenEdge && !turf.booleanIntersects(turf.buffer(w, 0.02, { units: 'kilometers', steps: 2 }), screenEdge);
       return !enclosed;
     } catch (e) {
       return true;
@@ -175,15 +223,27 @@ function trimToLand(ring, water, view) {
     land = next;
   }
 
-  if (bridgeKm > 0) {
-    // Grow the land by half the bridge width then shrink it back: any water
-    // narrower than the bridge closes up, wider water is left as it was.
-    try {
-      const grown = turf.buffer(land, bridgeKm / 2, { units: 'kilometers', steps: 12 });
-      const closed = turf.buffer(grown, -bridgeKm / 2, { units: 'kilometers', steps: 12 });
-      if (closed) land = closed;
-    } catch (e) {
-      // Bridging is a nicety; the trimmed land is still right.
+  if (inletRatio > 0) {
+    // Close up water at several sizes, biggest first. At each size, the water
+    // that closes over is a candidate inlet: keep it as land only if it runs
+    // far inland for the width of its mouth. Going from big to small finds an
+    // estuary's outer mouth first, and a river at the back of a bay later.
+    const inner = turf.buffer(area, -0.015, { units: 'kilometers', steps: 2 });
+    for (let r = reachKm; r >= 0.03; r /= 3) {
+      try {
+        const grown = turf.buffer(land, r, { units: 'kilometers', steps: 8 });
+        let closed = turf.buffer(grown, -r, { units: 'kilometers', steps: 8 });
+        closed = closed && turf.intersect(turf.featureCollection([closed, area]));
+        const filled = closed && turf.difference(turf.featureCollection([closed, land]));
+        if (!filled) continue;
+        const nearLand = turf.buffer(land, 0.015, { units: 'kilometers', steps: 2 });
+        for (const piece of polygonsOf(filled)) {
+          const inlet = inletWithStraightMouth(piece, nearLand, inner);
+          if (inlet) land = turf.union(turf.featureCollection([land, inlet])) || land;
+        }
+      } catch (e) {
+        // Bridging is a nicety; the trimmed land is still right.
+      }
     }
   }
 
@@ -197,7 +257,7 @@ function trimToLand(ring, water, view) {
 }
 
 function finish(ring, water, sizeMetres, view) {
-  const result = trimToLand(ring, water, view);
+  const result = trimToLand(ring, water, sizeMetres, view);
   const perimeterKm = turf.length(turf.lineString(result.ring), { units: 'kilometers' });
   return { coords: result.ring, perimeterMetres: Math.round(perimeterKm * 1000), trimmed: result.trimmed };
 }

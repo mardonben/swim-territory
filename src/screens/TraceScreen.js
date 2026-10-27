@@ -21,10 +21,11 @@ const LONDON = [-0.1276, 51.5072];
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
-// Test setting: rivers and creeks narrower than this are cut straight across
-// instead of followed. 0 always follows the water.
-const BRIDGE_CHOICES = [0, 50, 100, 200, 300, 500, 750, 1000];
-const BRIDGE_KEY = 'sharked.bridgeMetres';
+// Test setting: water that runs inland at least this many times as far as its
+// mouth is wide (a river or estuary) is cut straight across its mouth. Coves
+// and bays are followed. 0 always follows the water.
+const INLET_CHOICES = [0, 1, 1.5, 2, 3, 5];
+const INLET_KEY = 'sharked.inletRatio';
 const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
 
 function formatDate(iso) {
@@ -72,7 +73,7 @@ export default function TraceScreen() {
   const [leadersError, setLeadersError] = useState(null);
   const [swimmersOpen, setSwimmersOpen] = useState(false);
   const [swimmers, setSwimmers] = useState([]);
-  const [bridge, setBridge] = useState(200);
+  const [inletRatio, setInletRatio] = useState(1.5);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -124,8 +125,8 @@ export default function TraceScreen() {
     if (!mapReady) return;
     goToMe().catch(() => {});
     loadSwimmer();
-    AsyncStorage.getItem(BRIDGE_KEY)
-      .then((saved) => saved !== null && chooseBridge(Number(saved)))
+    AsyncStorage.getItem(INLET_KEY)
+      .then((saved) => saved !== null && chooseInletRatio(Number(saved)))
       .catch(() => {});
   }, [mapReady]);
 
@@ -168,10 +169,10 @@ export default function TraceScreen() {
     return () => sub.remove();
   }, [tab]);
 
-  function chooseBridge(metres) {
-    setBridge(metres);
-    run(`window.swimMap.setBridge(${metres})`);
-    AsyncStorage.setItem(BRIDGE_KEY, String(metres)).catch(() => {});
+  function chooseInletRatio(ratio) {
+    setInletRatio(ratio);
+    run(`window.swimMap.setInletRatio(${ratio})`);
+    AsyncStorage.setItem(INLET_KEY, String(ratio)).catch(() => {});
   }
 
   function openTab(name) {
@@ -581,17 +582,18 @@ export default function TraceScreen() {
                 Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
                 up in their own colour, stealing land like a real swimmer would.
               </Text>
-              <Text style={[styles.optionText, styles.settingTitle]}>🌊 Cut straight across water narrower than</Text>
+              <Text style={[styles.optionText, styles.settingTitle]}>🌊 Cut across the mouth of water that runs inland</Text>
               <View style={styles.chips}>
-                {BRIDGE_CHOICES.map((m) => (
-                  <Pressable key={m} style={[styles.chip, m === bridge && styles.chipOn]} onPress={() => chooseBridge(m)}>
-                    <Text style={[styles.chipText, m === bridge && styles.chipTextOn]}>{m === 0 ? 'Off' : `${m} m`}</Text>
+                {INLET_CHOICES.map((m) => (
+                  <Pressable key={m} style={[styles.chip, m === inletRatio && styles.chipOn]} onPress={() => chooseInletRatio(m)}>
+                    <Text style={[styles.chipText, m === inletRatio && styles.chipTextOn]}>{m === 0 ? 'Off' : `${m}×`}</Text>
                   </Pressable>
                 ))}
               </View>
               <Text style={[styles.cardHelp, styles.sheetHelp]}>
-                Rivers and creeks narrower than this are cut across where they get that narrow. Wider water
-                is followed. Applies to the next shape you draw.
+                How many times further inland than its mouth is wide water must go before the shape cuts
+                straight across its mouth (rivers, estuaries). Anything shallower, like a cove, is followed.
+                Higher means only long, narrow rivers get cut. Applies to the next shape.
               </Text>
             </ScrollView>
           </View>

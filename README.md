@@ -39,7 +39,7 @@ Each time you want to try the latest version:
 - **🏊 Pick a swim** lets you choose 25 m to 10 km. The app draws a circle from the middle of the map, sized so its boundary matches that swim.
 - **🗑️ Clear** starts over.
 
-Shapes always stop at land: they never go into the sea or a bay. Water completely surrounded by land, like a lake or pond, counts as part of the shape. Rivers and creeks narrower than a set width (200 m to start; change it under "🌊 Cut straight across water narrower than" in the menu you get by tapping your nickname) are cut straight across where they get that narrow; wider water is followed. Water that runs off the edge of the screen counts as sea. A new area is zoomed to fit the map. An area that is all sea is refused. The swim is set by the land outline the app draws (including the stretch along the coast), not by your finger trace. The number shown is the swim that claims the shape: every 1 km you swim claims 4 km of outline.
+Shapes always stop at land: they never go into the sea, and they follow coves and bays. Water completely surrounded by land, like a lake or pond, counts as part of the shape. Water that runs a long way inland for the width of its mouth (a river or estuary) is cut straight across its mouth, in line with the coast. How far is "a long way" is a test setting (1.5× the mouth width to start; tap your nickname, then **🌊 Cut across the mouth of water that runs inland**). Water that runs off the edge of the screen counts as sea.
 
 ## Locking in a challenge (needs Supabase, one-time setup)
 
