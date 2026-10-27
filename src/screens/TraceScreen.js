@@ -21,11 +21,11 @@ const LONDON = [-0.1276, 51.5072];
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
-// Test setting: water that runs inland at least this many times as far as its
-// mouth is wide (a river or estuary) is cut straight across its mouth. Coves
-// and bays are followed. 0 always follows the water.
-const INLET_CHOICES = [0, 1, 1.5, 2, 3, 5];
-const INLET_KEY = 'sharked.inletRatio';
+// Test setting: water that runs at least this many metres inland (a river or
+// estuary) is cut straight across its mouth. Coves and bays are followed. 0
+// always follows the water.
+const INLET_CHOICES = [0, 500, 1000, 2000, 3000, 5000];
+const INLET_KEY = 'sharked.inletDepthMetres';
 const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
 
 function formatDate(iso) {
@@ -73,7 +73,7 @@ export default function TraceScreen() {
   const [leadersError, setLeadersError] = useState(null);
   const [swimmersOpen, setSwimmersOpen] = useState(false);
   const [swimmers, setSwimmers] = useState([]);
-  const [inletRatio, setInletRatio] = useState(1.5);
+  const [inletDepth, setInletDepth] = useState(2000);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -126,7 +126,7 @@ export default function TraceScreen() {
     goToMe().catch(() => {});
     loadSwimmer();
     AsyncStorage.getItem(INLET_KEY)
-      .then((saved) => saved !== null && chooseInletRatio(Number(saved)))
+      .then((saved) => saved !== null && chooseInletDepth(Number(saved)))
       .catch(() => {});
   }, [mapReady]);
 
@@ -169,10 +169,10 @@ export default function TraceScreen() {
     return () => sub.remove();
   }, [tab]);
 
-  function chooseInletRatio(ratio) {
-    setInletRatio(ratio);
-    run(`window.swimMap.setInletRatio(${ratio})`);
-    AsyncStorage.setItem(INLET_KEY, String(ratio)).catch(() => {});
+  function chooseInletDepth(metres) {
+    setInletDepth(metres);
+    run(`window.swimMap.setInletDepth(${metres})`);
+    AsyncStorage.setItem(INLET_KEY, String(metres)).catch(() => {});
   }
 
   function openTab(name) {
@@ -585,15 +585,14 @@ export default function TraceScreen() {
               <Text style={[styles.optionText, styles.settingTitle]}>🌊 Cut across the mouth of water that runs inland</Text>
               <View style={styles.chips}>
                 {INLET_CHOICES.map((m) => (
-                  <Pressable key={m} style={[styles.chip, m === inletRatio && styles.chipOn]} onPress={() => chooseInletRatio(m)}>
-                    <Text style={[styles.chipText, m === inletRatio && styles.chipTextOn]}>{m === 0 ? 'Off' : `${m}×`}</Text>
+                  <Pressable key={m} style={[styles.chip, m === inletDepth && styles.chipOn]} onPress={() => chooseInletDepth(m)}>
+                    <Text style={[styles.chipText, m === inletDepth && styles.chipTextOn]}>{m === 0 ? 'Off' : formatDistance(m)}</Text>
                   </Pressable>
                 ))}
               </View>
               <Text style={[styles.cardHelp, styles.sheetHelp]}>
-                How many times further inland than its mouth is wide water must go before the shape cuts
-                straight across its mouth (rivers, estuaries). Anything shallower, like a cove, is followed.
-                Higher means only long, narrow rivers get cut. Applies to the next shape.
+                Water that runs at least this far inland (rivers, estuaries) is cut straight across its
+                mouth. Anything shorter, like a cove or creek, is followed. Applies to the next shape.
               </Text>
             </ScrollView>
           </View>

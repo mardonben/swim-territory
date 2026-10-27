@@ -125,12 +125,12 @@ function joinWater(water) {
   return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).map((c) => turf.polygon(c));
 }
 
-// How far inland water has to run, compared with how wide its mouth is, for
-// the shape to cut straight across the mouth instead of following it in.
-// Rivers and estuaries run far inland; coves and bays are about as deep as
-// they are wide, so they're followed. 0 means always follow the water. The
-// app can change it (see swimMap.setInletRatio).
-let inletRatio = 1.5;
+// How far inland (in metres) water has to run from its mouth for the shape to
+// cut straight across the mouth instead of following it in. Rivers and
+// estuaries run far inland; coves and bays don't, so they're followed. 0
+// means always follow the water. The app can change it (see
+// swimMap.setInletDepth).
+let inletDepthMetres = 2000;
 
 function polygonsOf(feature) {
   const g = feature.geometry;
@@ -139,7 +139,8 @@ function polygonsOf(feature) {
 
 // A piece of water that the land closes around. Its edge is bank (land), the
 // edge of the screen, or its mouth (open to the sea). If it runs far enough
-// inland for its mouth, returns it with the mouth straightened; otherwise null.
+// inland, returns it with the mouth straightened; otherwise null. Water that
+// carries on off the screen, away from its mouth, counts as far enough.
 function inletWithStraightMouth(piece, nearLand, inner) {
   const area = turf.area(piece);
   if (area < 200) return null;
@@ -147,9 +148,12 @@ function inletWithStraightMouth(piece, nearLand, inner) {
   const lengthKm = turf.length(edge, { units: 'kilometers' });
   const n = 160;
   const pts = [];
+  let offScreen = false;
   for (let i = 0; i < n; i++) {
     const p = turf.along(edge, (lengthKm * i) / n, { units: 'kilometers' });
-    const mouth = !turf.booleanPointInPolygon(p, nearLand) && turf.booleanPointInPolygon(p, inner);
+    const onEdge = !turf.booleanPointInPolygon(p, inner);
+    const mouth = !turf.booleanPointInPolygon(p, nearLand) && !onEdge;
+    if (onEdge && !turf.booleanPointInPolygon(p, nearLand)) offScreen = true;
     pts.push({ p, mouth });
   }
   const mouthPts = pts.filter((x) => x.mouth);
@@ -169,7 +173,9 @@ function inletWithStraightMouth(piece, nearLand, inner) {
     for (const m of mouthPts) nearest = Math.min(nearest, turf.distance(x.p, m.p, { units: 'meters' }));
     depth = Math.max(depth, nearest);
   }
-  if (depth < inletRatio * mouthWidth) return null;
+  // Off screen it might go anywhere, but it must at least be river-shaped.
+  const farEnough = depth >= inletDepthMetres || (offScreen && depth >= mouthWidth * 1.5);
+  if (!farEnough) return null;
   // Bridging leaves the mouth curved; fill it out to a straight line.
   try {
     return hull ? turf.union(turf.featureCollection([piece, hull])) || piece : piece;
@@ -187,11 +193,12 @@ function inletWithStraightMouth(piece, nearLand, inner) {
 // it's always cut out. view is the part of the map on screen.
 function trimToLand(ring, water, sizeMetres, view) {
   const shape = turf.polygon([ring]);
-  const reachKm = clamp(sizeMetres * 2, 50, 5000) / 1000;
+  // Big enough to see a river's whole run inland, where the screen shows it.
+  const reachKm = clamp(Math.max(sizeMetres * 2, inletDepthMetres * 1.1), 50, 6000) / 1000;
   // Look well past the shape, so a river is judged by its whole length on
   // screen, not just the part inside the shape.
-  let area = inletRatio > 0 ? turf.buffer(shape, reachKm, { units: 'kilometers', steps: 4 }) : shape;
-  if (view && inletRatio > 0) {
+  let area = inletDepthMetres > 0 ? turf.buffer(shape, reachKm, { units: 'kilometers', steps: 4 }) : shape;
+  if (view && inletDepthMetres > 0) {
     try {
       area = turf.intersect(turf.featureCollection([area, view])) || area;
     } catch (e) {
@@ -223,11 +230,11 @@ function trimToLand(ring, water, sizeMetres, view) {
     land = next;
   }
 
-  if (inletRatio > 0) {
+  if (inletDepthMetres > 0) {
     // Close up water at several sizes, biggest first. At each size, the water
     // that closes over is a candidate inlet: keep it as land only if it runs
-    // far inland for the width of its mouth. Going from big to small finds an
-    // estuary's outer mouth first, and a river at the back of a bay later.
+    // far enough inland. Going from big to small finds an estuary's outer
+    // mouth first, and a river at the back of a bay later.
     const inner = turf.buffer(area, -0.015, { units: 'kilometers', steps: 2 });
     for (let r = reachKm; r >= 0.03; r /= 3) {
       try {

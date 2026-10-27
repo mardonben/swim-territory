@@ -166,9 +166,9 @@ ${outlineScript}
     resize() {
       map.resize();
     },
-    // How far inland water must run, for its mouth width, to be cut across.
-    setInletRatio(ratio) {
-      inletRatio = ratio;
+    // How far inland (metres) water must run to be cut across at its mouth.
+    setInletDepth(metres) {
+      inletDepthMetres = metres;
     },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
