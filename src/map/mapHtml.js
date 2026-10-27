@@ -89,6 +89,9 @@ ${outlineScript}
 
   function sendShape(shape, suggested) {
     setShape(shape.coords);
+    // Centre the new area in view.
+    const [w, south, e, n] = turf.bbox(turf.lineString(shape.coords));
+    map.fitBounds([[w, south], [e, n]], { padding: 40, maxZoom: 17, duration: 600 });
     send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, coordinates: shape.coords });
   }
 

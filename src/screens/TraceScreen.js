@@ -344,121 +344,118 @@ export default function TraceScreen() {
         {tabs}
       </View>
 
-      <View style={styles.mapWrap}>
-        <WebView
-          ref={webview}
-          style={styles.map}
-          originWhitelist={['*']}
-          source={{ html, baseUrl: 'https://localhost' }}
-          onMessage={onMessage}
-          javaScriptEnabled
-        />
-        <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
-          <Text style={styles.locateText}>📍</Text>
-        </Pressable>
-        {tapped ? (
-          <View style={styles.areaCard}>
-            <View style={[styles.areaSwatch, { backgroundColor: tapped.colour }]} />
-            <View style={styles.areaInfo}>
-              <Text style={styles.areaName}>{tapped.mine ? `${tapped.nickname} (you)` : tapped.nickname}</Text>
-              <Text style={styles.areaLine}>
-                Held for {formatHeldFor(tapped.claimed_at)} · since {formatDate(tapped.claimed_at)}
-              </Text>
-              {tapped.swim_metres ? (
-                <Text style={styles.areaLine}>Won with a {formatDistance(tapped.swim_metres)} swim</Text>
-              ) : null}
-            </View>
-            <Pressable onPress={() => setTapped(null)} hitSlop={12}>
-              <Text style={styles.areaClose}>✕</Text>
-            </Pressable>
-          </View>
-        ) : null}
-      </View>
-
-      <View style={styles.panel}>
-        {pending ? (
-          <View style={styles.pending}>
-            <Text style={styles.pendingText}>
-              🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
-            </Text>
-            <Pressable onPress={cancelPending} disabled={saving}>
-              <Text style={styles.pendingCancel}>Cancel</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {pending ? (
-          <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
-            <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
-          </Pressable>
-        ) : null}
-        {shape ? (
-          <>
-            <Text style={styles.label}>Swim to claim it</Text>
-            <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
-            <Text style={styles.lengths}>
-              about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
-              {formatDistance(shape.perimeterMetres)}
-            </Text>
-          </>
-        ) : null}
-        <Text style={styles.status}>{status}</Text>
-        {shape && !pending ? (
-          <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
-            <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
-          </Pressable>
-        ) : null}
-        {shape && pending ? (
-          <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
-        ) : null}
-        <View style={styles.buttons}>
-          <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
-            <Text style={styles.buttonText}>
-              🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
-            </Text>
-          </Pressable>
-          <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
-            <Text style={styles.buttonText}>🗑️ Clear</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {tab === 'leaderboard' ? (
-        // Covers the whole screen. The map stays loaded underneath.
-        <View style={styles.board}>
-          <View style={styles.header}>
-            <Text style={styles.title}>🏆 Leaderboard</Text>
-            {tabs}
-          </View>
-          <Text style={styles.boardHelp}>
-            Ranked by the total outline of the land each swimmer holds right now. Lose land and
-            your total drops.
-          </Text>
-          {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
-          <FlatList
-            data={leaders ?? []}
-            keyExtractor={(row) => row.user_id}
-            refreshing={leaders === null && !leadersError}
-            onRefresh={loadLeaders}
-            ListEmptyComponent={
-              leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
-            }
-            renderItem={({ item, index }) => (
-              <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
-                <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
-                <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
-                <View style={styles.areaInfo}>
-                  <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
-                  <Text style={styles.boardLine}>
-                    {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
-                    {(item.area_m2 / 1e6).toFixed(2)} km²
-                  </Text>
-                </View>
-                <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
-              </View>
-            )}
+      <View style={styles.body}>
+        <View style={styles.mapWrap}>
+          <WebView
+            ref={webview}
+            style={styles.map}
+            originWhitelist={['*']}
+            source={{ html, baseUrl: 'https://localhost' }}
+            onMessage={onMessage}
+            javaScriptEnabled
           />
+          <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
+            <Text style={styles.locateText}>📍</Text>
+          </Pressable>
+          {tapped ? (
+            <View style={styles.areaCard}>
+              <View style={[styles.areaSwatch, { backgroundColor: tapped.colour }]} />
+              <View style={styles.areaInfo}>
+                <Text style={styles.areaName}>{tapped.mine ? `${tapped.nickname} (you)` : tapped.nickname}</Text>
+                <Text style={styles.areaLine}>
+                  Held for {formatHeldFor(tapped.claimed_at)} · since {formatDate(tapped.claimed_at)}
+                </Text>
+                {tapped.swim_metres ? (
+                  <Text style={styles.areaLine}>Won with a {formatDistance(tapped.swim_metres)} swim</Text>
+                ) : null}
+              </View>
+              <Pressable onPress={() => setTapped(null)} hitSlop={12}>
+                <Text style={styles.areaClose}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
-      ) : null}
+
+        <View style={styles.panel}>
+          {pending ? (
+            <View style={styles.pending}>
+              <Text style={styles.pendingText}>
+                🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
+              </Text>
+              <Pressable onPress={cancelPending} disabled={saving}>
+                <Text style={styles.pendingCancel}>Cancel</Text>
+              </Pressable>
+            </View>
+          ) : null}
+          {pending ? (
+            <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
+              <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
+            </Pressable>
+          ) : null}
+          {shape ? (
+            <>
+              <Text style={styles.label}>Swim to claim it</Text>
+              <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
+              <Text style={styles.lengths}>
+                about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
+                {formatDistance(shape.perimeterMetres)}
+              </Text>
+            </>
+          ) : null}
+          <Text style={styles.status}>{status}</Text>
+          {shape && !pending ? (
+            <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
+              <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
+            </Pressable>
+          ) : null}
+          {shape && pending ? (
+            <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
+          ) : null}
+          <View style={styles.buttons}>
+            <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
+              <Text style={styles.buttonText}>
+                🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
+              </Text>
+            </Pressable>
+            <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
+              <Text style={styles.buttonText}>🗑️ Clear</Text>
+            </Pressable>
+          </View>
+        </View>
+        {tab === 'leaderboard' ? (
+          // Covers everything below the header. The map stays loaded underneath.
+          <View style={styles.board}>
+            <Text style={styles.boardHelp}>
+              Ranked by the total outline of the land each swimmer holds right now. Lose land and
+              your total drops.
+            </Text>
+            {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
+            <FlatList
+              data={leaders ?? []}
+              keyExtractor={(row) => row.user_id}
+              refreshing={leaders === null && !leadersError}
+              onRefresh={loadLeaders}
+              ListEmptyComponent={
+                leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
+              }
+              renderItem={({ item, index }) => (
+                <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
+                  <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
+                  <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
+                  <View style={styles.areaInfo}>
+                    <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
+                    <Text style={styles.boardLine}>
+                      {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
+                      {(item.area_m2 / 1e6).toFixed(2)} km²
+                    </Text>
+                  </View>
+                  <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
+                </View>
+              )}
+            />
+          </View>
+        ) : null}
+      </View>
 
       <Modal visible={pickerOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
@@ -618,6 +615,9 @@ const styles = StyleSheet.create({
   },
   tabTextOn: {
     color: '#0B3D5C',
+  },
+  body: {
+    flex: 1,
   },
   board: {
     ...StyleSheet.absoluteFillObject,
@@ -832,6 +832,7 @@ const styles = StyleSheet.create({
   lengths: {
     color: '#9FD3F0',
     fontSize: 14,
+    textAlign: 'center',
   },
   status: {
     color: '#9FD3F0',
