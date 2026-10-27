@@ -45,7 +45,7 @@ Shapes never go out to sea: they're trimmed to the coastline and cut straight ac
 
 Once you have a shape, tap **🔒 Lock in this challenge**. It's saved online as your pending challenge and shows on the map as an orange dashed area, with a banner saying how far to swim. You can have one pending challenge at a time; tap **Cancel** on the banner to drop it.
 
-The app is already connected to the Sharked Supabase project, and the database is set up with `supabase/001_challenges.sql`, `supabase/002_territory.sql`, `supabase/003_profiles.sql` then `supabase/004_area_details.sql` (all safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
+The app is already connected to the Sharked Supabase project, and the database is set up with `supabase/001_challenges.sql`, `supabase/002_territory.sql`, `supabase/003_profiles.sql`, `supabase/004_area_details.sql` then `supabase/005_leaderboard.sql` (all safe to re-run). The one dashboard setting it needs is **Allow anonymous sign-ins**, under Authentication → Sign In / Providers.
 
 ## Claiming territory (test mode)
 
@@ -54,6 +54,14 @@ While a challenge is pending, **✅ I swam it (test)** pretends you've done the 
 ## Nicknames and colours
 
 The first time you open the app it asks for a nickname and a map colour. Only these are shown to other swimmers: no real names, emails or phone details. Nicknames are unique (ignoring capitals) and can be 2 to 20 letters, numbers, spaces, - or _. Tap your nickname at the top to change it. Tap any area on the map to see who holds it, how long they've held it, and the swim that won it.
+
+## Leaderboard
+
+The **🏆 Leaderboard** tab ranks swimmers by the total outline of the land they hold right now, with their number of areas and area in km². Because the newest claim cuts into older land, a swimmer's total changes as soon as someone takes part of their territory. Pull down to refresh.
+
+## Pretend swimmers (testing)
+
+Tap your nickname at the top to see who you're playing as. **➕ Add a pretend swimmer** creates another swimmer on the same phone (up to 4 in all), with its own nickname, colour and pending challenge. Switch between them from the same menu to draw areas as different people and watch them steal land from each other. Each pretend swimmer is a separate anonymous sign-in, kept on this phone only.
 
 ## Build plan
 

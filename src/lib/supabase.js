@@ -5,12 +5,12 @@ import { createClient } from '@supabase/supabase-js';
 // Ben's Sharked project. The publishable key is meant to ship inside apps:
 // row-level security in the supabase/ scripts is what protects the data.
 // .env.local can point at a different project instead.
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://lgdupjgrcxkdkhjfoymf.supabase.co';
-const key = process.env.EXPO_PUBLIC_SUPABASE_KEY || 'sb_publishable_J0Bs1CnDo3hA_U0L3mqcYw_TlsfJAnO';
+export const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://lgdupjgrcxkdkhjfoymf.supabase.co';
+export const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_KEY || 'sb_publishable_J0Bs1CnDo3hA_U0L3mqcYw_TlsfJAnO';
 
 export const supabase =
-  url && key
-    ? createClient(url, key, {
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
         auth: {
           storage: AsyncStorage,
           autoRefreshToken: true,

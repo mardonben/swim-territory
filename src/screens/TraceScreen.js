@@ -11,6 +11,8 @@ import {
   lockInChallenge,
 } from '../lib/challenges';
 import { getMyProfile, isValidNickname, NICKNAME_RULE, saveMyProfile, SWIMMER_COLOURS } from '../lib/profile';
+import { addTestSwimmer, listSwimmers, MAX_SWIMMERS, switchToSwimmer } from '../lib/swimmers';
+import { getLeaderboard } from '../lib/leaderboard';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
@@ -59,6 +61,11 @@ export default function TraceScreen() {
   const [colour, setColour] = useState(SWIMMER_COLOURS[0]);
   const [profileError, setProfileError] = useState(null);
   const [tapped, setTapped] = useState(null);
+  const [tab, setTab] = useState('map');
+  const [leaders, setLeaders] = useState(null);
+  const [leadersError, setLeadersError] = useState(null);
+  const [swimmersOpen, setSwimmersOpen] = useState(false);
+  const [swimmers, setSwimmers] = useState([]);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -109,17 +116,62 @@ export default function TraceScreen() {
   useEffect(() => {
     if (!mapReady) return;
     goToMe().catch(() => {});
+    loadSwimmer();
+  }, [mapReady]);
+
+  // Everything that belongs to the swimmer using the app right now.
+  function loadSwimmer() {
     getPendingChallenge()
       .then(showPending)
-      .catch(() => {});
+      .catch(() => showPending(null));
     getTerritory()
       .then(showTerritory)
       .catch(() => {});
-    // First time on this phone: pick a nickname before anything else.
+    // First time for this swimmer: pick a nickname before anything else.
     getMyProfile()
       .then((mine) => (mine ? setProfile(mine) : editProfile(null)))
       .catch(() => {});
-  }, [mapReady]);
+  }
+
+  async function loadLeaders() {
+    setLeadersError(null);
+    try {
+      setLeaders(await getLeaderboard());
+    } catch (e) {
+      setLeadersError(e.message);
+    }
+  }
+
+  function openTab(name) {
+    setTab(name);
+    setTapped(null);
+    if (name === 'leaderboard') loadLeaders();
+  }
+
+  async function openSwimmers() {
+    setSwimmersOpen(true);
+    setSwimmers(await listSwimmers().catch(() => []));
+  }
+
+  async function changeSwimmer(action) {
+    setSaving(true);
+    try {
+      await action();
+      setSwimmersOpen(false);
+      setProfile(null);
+      setShape(null);
+      setTapped(null);
+      run('window.swimMap.clear()');
+      loadSwimmer();
+      if (tab === 'leaderboard') loadLeaders();
+      setStatus(DRAW_HINT);
+    } catch (e) {
+      setStatus(`Couldn't switch swimmer: ${e.message}`);
+      setSwimmersOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function editProfile(current) {
     setNickname(current?.nickname ?? '');
@@ -248,11 +300,11 @@ export default function TraceScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
         {profile ? (
-          <Pressable style={styles.me} onPress={() => editProfile(profile)}>
+          <Pressable style={styles.me} onPress={openSwimmers}>
             <View style={[styles.swatch, { backgroundColor: profile.colour }]} />
             <Text style={styles.subtitle}>
               {profile.nickname}
-              {myAreas > 0 ? ` · ${myAreas} ${myAreas === 1 ? 'area' : 'areas'} held` : ''} ✏️
+              {myAreas > 0 ? ` · ${myAreas} ${myAreas === 1 ? 'area' : 'areas'} held` : ''} ▾
             </Text>
           </Pressable>
         ) : myAreas > 0 ? (
@@ -260,6 +312,17 @@ export default function TraceScreen() {
             {myAreas} {myAreas === 1 ? 'area' : 'areas'} held
           </Text>
         ) : null}
+        <View style={styles.tabs}>
+          <Pressable style={[styles.tab, tab === 'map' && styles.tabOn]} onPress={() => openTab('map')}>
+            <Text style={[styles.tabText, tab === 'map' && styles.tabTextOn]}>🗺️ Map</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tab, tab === 'leaderboard' && styles.tabOn]}
+            onPress={() => openTab('leaderboard')}
+          >
+            <Text style={[styles.tabText, tab === 'leaderboard' && styles.tabTextOn]}>🏆 Leaderboard</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.mapWrap}>
@@ -291,9 +354,42 @@ export default function TraceScreen() {
             </Pressable>
           </View>
         ) : null}
+        {tab === 'leaderboard' ? (
+          // Laid over the map, which stays loaded underneath.
+          <View style={styles.board}>
+            <Text style={styles.boardHelp}>
+              Ranked by the total outline of the land each swimmer holds right now. Lose land and
+              your total drops.
+            </Text>
+            {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
+            <FlatList
+              data={leaders ?? []}
+              keyExtractor={(row) => row.user_id}
+              refreshing={leaders === null && !leadersError}
+              onRefresh={loadLeaders}
+              ListEmptyComponent={
+                leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
+              }
+              renderItem={({ item, index }) => (
+                <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
+                  <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
+                  <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
+                  <View style={styles.areaInfo}>
+                    <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
+                    <Text style={styles.boardLine}>
+                      {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
+                      {(item.area_m2 / 1e6).toFixed(2)} km²
+                    </Text>
+                  </View>
+                  <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
+                </View>
+              )}
+            />
+          </View>
+        ) : null}
       </View>
 
-      <View style={styles.panel}>
+      <View style={[styles.panel, tab !== 'map' && styles.hidden]}>
         {pending ? (
           <View style={styles.pending}>
             <Text style={styles.pendingText}>
@@ -403,6 +499,50 @@ export default function TraceScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={swimmersOpen} transparent animationType="fade" onRequestClose={() => setSwimmersOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setSwimmersOpen(false)}>
+          <View style={styles.sheet}>
+            <Text style={styles.sheetTitle}>Playing as</Text>
+            {swimmers.map((s) => (
+              <Pressable
+                key={s.id}
+                style={styles.swimmerRow}
+                disabled={s.current || saving}
+                onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
+              >
+                <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
+                <Text style={[styles.optionText, s.current && styles.optionChosen]}>
+                  {s.nickname}
+                  {s.current ? '  ✓' : ''}
+                </Text>
+              </Pressable>
+            ))}
+            <Pressable
+              style={styles.swimmerRow}
+              onPress={() => {
+                setSwimmersOpen(false);
+                editProfile(profile);
+              }}
+            >
+              <Text style={styles.optionText}>✏️ Change nickname or colour</Text>
+            </Pressable>
+            {swimmers.length < MAX_SWIMMERS ? (
+              <Pressable
+                style={styles.swimmerRow}
+                disabled={saving}
+                onPress={() => changeSwimmer(addTestSwimmer)}
+              >
+                <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
+              </Pressable>
+            ) : null}
+            <Text style={[styles.cardHelp, styles.sheetHelp]}>
+              Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
+              up in their own colour, stealing land like a real swimmer would.
+            </Text>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -431,6 +571,87 @@ const styles = StyleSheet.create({
     color: '#9FD3F0',
     fontSize: 13,
     marginTop: 2,
+  },
+  tabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  tab: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#145A86',
+  },
+  tabOn: {
+    backgroundColor: '#FFFFFF',
+  },
+  tabText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  tabTextOn: {
+    color: '#0B3D5C',
+  },
+  hidden: {
+    display: 'none',
+  },
+  board: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0B3D5C',
+    paddingHorizontal: 16,
+  },
+  boardHelp: {
+    color: '#9FD3F0',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 12,
+    paddingHorizontal: 16,
+  },
+  boardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#145A86',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+  },
+  boardRowMine: {
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  boardRank: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    width: 32,
+    textAlign: 'center',
+  },
+  boardName: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  boardLine: {
+    color: '#9FD3F0',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  boardScore: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  sheetHelp: {
+    paddingHorizontal: 24,
+  },
+  swimmerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
   },
   areaCard: {
     position: 'absolute',
