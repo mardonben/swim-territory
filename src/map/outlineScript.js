@@ -331,13 +331,19 @@ function shapeFromLoop(loop, water, view) {
   return finish(closeRing(rounded.map(proj.from)), water, size, view);
 }
 
-// A circle round the centre whose land boundary matches the target length.
+// A circle round the centre whose land boundary comes as close to the target
+// length as it can without going over it, so a swim of exactly the picked
+// distance always covers it.
 function circleShape(center, targetPerimeter, water, view) {
   const proj = projector(center);
-  let radius = targetPerimeter / (2 * Math.PI);
+  // Aim a touch under the target, so small wobbles don't tip it over.
+  const aim = targetPerimeter * 0.99;
+  let radius = aim / (2 * Math.PI);
   let best = null;
+  let rUnder = 0;
+  let rOver = Infinity;
   // Trimming off the sea changes the boundary length, so adjust and retry.
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 12; attempt++) {
     const ring = [];
     for (let k = 0; k < 72; k++) {
       const a = (k / 72) * 2 * Math.PI;
@@ -351,11 +357,20 @@ function circleShape(center, targetPerimeter, water, view) {
       if (best) break;
       throw e;
     }
-    const error = Math.abs(shape.perimeterMetres - targetPerimeter);
-    if (!best || error < Math.abs(best.perimeterMetres - targetPerimeter)) best = shape;
-    if (error / targetPerimeter < 0.03 || !shape.trimmed) break;
-    radius *= Math.pow(targetPerimeter / shape.perimeterMetres, 0.8);
+    const under = shape.perimeterMetres <= targetPerimeter;
+    if (under && (!best || shape.perimeterMetres > best.perimeterMetres)) best = shape;
+    if (under && shape.perimeterMetres >= targetPerimeter * 0.97) break;
+    if (under) rUnder = Math.max(rUnder, radius);
+    else rOver = Math.min(rOver, radius);
+    // Once there's a size just under and one just over, split the difference.
+    // Otherwise scale towards the target, always shrinking by at least 5% when
+    // over it.
+    const step = Math.pow(aim / shape.perimeterMetres, 0.8);
+    radius = rUnder > 0 && rOver < Infinity
+      ? (rUnder + rOver) / 2
+      : radius * (under ? step : Math.min(step, 0.95));
   }
+  if (!best) throw new Error('Could not fit an area under that distance here.');
   return best;
 }
 `;
