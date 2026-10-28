@@ -24,12 +24,16 @@ export async function getPendingChallenge() {
   return data;
 }
 
-export async function lockInChallenge({ coordinates, boundaryMetres, swimMetres }) {
+// rings: one outline per piece; a shape split by water has several.
+export async function lockInChallenge({ rings, boundaryMetres, swimMetres }) {
   await ensureSignedIn();
   const { data, error } = await supabase
     .from('challenges')
     .insert({
-      boundary: { type: 'Polygon', coordinates: [coordinates] },
+      boundary:
+        rings.length === 1
+          ? { type: 'Polygon', coordinates: [rings[0]] }
+          : { type: 'MultiPolygon', coordinates: rings.map((r) => [r]) },
       boundary_metres: boundaryMetres,
       swim_metres: swimMetres,
     })
@@ -52,10 +56,11 @@ export async function completeChallenge(id) {
 // colour, and marked with whether it's yours.
 export async function getTerritory() {
   const me = await ensureSignedIn();
-  const { data, error } = await supabase
-    .from('territory')
-    .select('id, user_id, boundary, claimed_at')
-    .order('claimed_at', { ascending: true });
+  const query = (columns) =>
+    supabase.from('territory').select(columns).order('claimed_at', { ascending: true });
+  let { data, error } = await query('id, user_id, boundary, claimed_at, swim_metres');
+  // Before 004_area_details.sql is run there's no swim distance to show.
+  if (error?.code === '42703') ({ data, error } = await query('id, user_id, boundary, claimed_at'));
   if (error) throw friendly(error);
   // Still show the map if nicknames can't be loaded, just without them.
   const profiles = await getProfiles([...new Set(data.map((t) => t.user_id))]).catch(() => ({}));

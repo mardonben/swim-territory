@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { BackHandler, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { setStatusBarStyle, StatusBar } from 'expo-status-bar';
 import { WebView } from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { buildMapHtml } from '../map/mapHtml';
 import {
@@ -11,16 +13,40 @@ import {
   lockInChallenge,
 } from '../lib/challenges';
 import { getMyProfile, isValidNickname, NICKNAME_RULE, saveMyProfile, SWIMMER_COLOURS } from '../lib/profile';
+import { addTestSwimmer, listSwimmers, switchToSwimmer } from '../lib/swimmers';
+import { getLeaderboard } from '../lib/leaderboard';
 
 const MAPBOX_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_TOKEN;
 const LONDON = [-0.1276, 51.5072];
+// A leaderboard row counts as on screen once most of it shows.
+const ROWS_SEEN = { itemVisiblePercentThreshold: 60 };
 // Every 1 km you swim claims 4 km of territory outline.
 const OUTLINE_PER_SWIM = 4;
 const SWIM_DISTANCES = [25, 50, 100, 200, 400, 500, 750, 1000, 1500, 2000, 3000, 4000, 5000, 7500, 10000];
+// Test setting: water that runs at least this many metres inland (a river or
+// estuary) is cut straight across its mouth. Coves and bays are followed. 0
+// always follows the water.
+const INLET_CHOICES = [0, 500, 1000, 2000, 3000, 5000];
+const INLET_KEY = 'sharked.inletDepthMetres';
 const DRAW_HINT = 'Draw a loop with one finger. Use two fingers to move and zoom.';
 
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// "3 days", "1 hour", "a few minutes"
+function formatHeldFor(iso) {
+  const minutes = Math.max(0, (Date.now() - new Date(iso).getTime()) / 60000);
+  const units = [
+    ['day', 60 * 24],
+    ['hour', 60],
+    ['minute', 1],
+  ];
+  for (const [name, size] of units) {
+    const n = Math.floor(minutes / size);
+    if (n >= 1 && (name !== 'minute' || n >= 5)) return `${n} ${name}${n === 1 ? '' : 's'}`;
+  }
+  return 'a few minutes';
 }
 
 function formatDistance(metres) {
@@ -43,6 +69,43 @@ export default function TraceScreen() {
   const [nickname, setNickname] = useState('');
   const [colour, setColour] = useState(SWIMMER_COLOURS[0]);
   const [profileError, setProfileError] = useState(null);
+  const [tapped, setTapped] = useState(null);
+  const [tab, setTab] = useState('map');
+  const [leaders, setLeaders] = useState(null);
+  const [leadersError, setLeadersError] = useState(null);
+  const boardRef = useRef(null);
+  // The first and last leaderboard rows on screen, to know where yours is.
+  const [rowsSeen, setRowsSeen] = useState(null);
+  const onRowsSeen = useRef(({ viewableItems }) => {
+    const seen = viewableItems.map((v) => v.index);
+    setRowsSeen(seen.length ? { first: Math.min(...seen), last: Math.max(...seen) } : null);
+  }).current;
+  const myIndex = leaders ? leaders.findIndex((row) => row.mine) : -1;
+  let myPin = null;
+  if (myIndex >= 0 && rowsSeen) {
+    if (myIndex > rowsSeen.last) myPin = 'bottom';
+    else if (myIndex < rowsSeen.first) myPin = 'top';
+  }
+
+  function boardRow(item, index) {
+    return (
+      <View style={[styles.boardRow, item.mine && styles.boardRowMine]}>
+        <Text style={styles.boardRank}>{index < 3 ? ['🥇', '🥈', '🥉'][index] : index + 1}</Text>
+        <View style={[styles.areaSwatch, { backgroundColor: item.colour }]} />
+        <View style={styles.areaInfo}>
+          <Text style={styles.boardName}>{item.mine ? `${item.nickname} (you)` : item.nickname}</Text>
+          <Text style={styles.boardLine}>
+            {item.areas} {item.areas === 1 ? 'area' : 'areas'} ·{' '}
+            {(item.area_m2 / 1e6).toFixed(2)} km²
+          </Text>
+        </View>
+        <Text style={styles.boardScore}>{formatDistance(item.perimeter_metres)}</Text>
+      </View>
+    );
+  }
+  const [swimmersOpen, setSwimmersOpen] = useState(false);
+  const [swimmers, setSwimmers] = useState([]);
+  const [inletDepth, setInletDepth] = useState(2000);
 
   const swimMetres = shape ? Math.round(shape.perimeterMetres / OUTLINE_PER_SWIM) : 0;
 
@@ -70,18 +133,18 @@ export default function TraceScreen() {
 
   function showPending(challenge) {
     setPending(challenge);
-    const coords = challenge ? challenge.boundary.coordinates[0] : null;
-    run(`window.swimMap.showPending(${JSON.stringify(coords)})`);
+    run(`window.swimMap.showPending(${JSON.stringify(challenge ? challenge.boundary : null)})`);
   }
 
   function showTerritory(areas) {
     setTerritory(areas);
+    setTapped(null);
     const forMap = areas.map((a) => ({
+      id: a.id,
       geometry: a.boundary,
       mine: a.mine,
       nickname: a.nickname,
       colour: a.colour,
-      claimedAt: a.claimed_at,
     }));
     run(`window.swimMap.showTerritory(${JSON.stringify(forMap)})`);
   }
@@ -92,17 +155,89 @@ export default function TraceScreen() {
   useEffect(() => {
     if (!mapReady) return;
     goToMe().catch(() => {});
+    loadSwimmer();
+    AsyncStorage.getItem(INLET_KEY)
+      .then((saved) => saved !== null && chooseInletDepth(Number(saved)))
+      .catch(() => {});
+  }, [mapReady]);
+
+  // Everything that belongs to the swimmer using the app right now.
+  function loadSwimmer() {
     getPendingChallenge()
       .then(showPending)
-      .catch(() => {});
+      .catch(() => showPending(null));
     getTerritory()
       .then(showTerritory)
       .catch(() => {});
-    // First time on this phone: pick a nickname before anything else.
+    // First time for this swimmer: pick a nickname before anything else.
     getMyProfile()
       .then((mine) => (mine ? setProfile(mine) : editProfile(null)))
       .catch(() => {});
-  }, [mapReady]);
+  }
+
+  async function loadLeaders() {
+    setLeadersError(null);
+    try {
+      setLeaders(await getLeaderboard());
+    } catch (e) {
+      setLeadersError(e.message);
+    }
+  }
+
+  // White clock and battery icons on the dark blue. Android can reset them when
+  // a pop-up closes, so set them again each time one opens or closes.
+  useEffect(() => {
+    setStatusBarStyle('light');
+  }, [pickerOpen, profileOpen, swimmersOpen, tab]);
+
+  // Android's back button goes from the leaderboard back to the map.
+  useEffect(() => {
+    if (tab !== 'leaderboard') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      openTab('map');
+      return true;
+    });
+    return () => sub.remove();
+  }, [tab]);
+
+  function chooseInletDepth(metres) {
+    setInletDepth(metres);
+    run(`window.swimMap.setInletDepth(${metres})`);
+    AsyncStorage.setItem(INLET_KEY, String(metres)).catch(() => {});
+  }
+
+  function openTab(name) {
+    setTab(name);
+    setTapped(null);
+    if (name === 'leaderboard') loadLeaders();
+    // The map was hidden; let it fill its space again.
+    else setTimeout(() => run('window.swimMap.resize()'), 50);
+  }
+
+  async function openSwimmers() {
+    setSwimmersOpen(true);
+    setSwimmers(await listSwimmers().catch(() => []));
+  }
+
+  async function changeSwimmer(action) {
+    setSaving(true);
+    try {
+      await action();
+      setSwimmersOpen(false);
+      setProfile(null);
+      setShape(null);
+      setTapped(null);
+      run('window.swimMap.clear()');
+      loadSwimmer();
+      if (tab === 'leaderboard') loadLeaders();
+      setStatus(DRAW_HINT);
+    } catch (e) {
+      setStatus(`Couldn't switch swimmer: ${e.message}`);
+      setSwimmersOpen(false);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   function editProfile(current) {
     setNickname(current?.nickname ?? '');
@@ -147,7 +282,7 @@ export default function TraceScreen() {
     setSaving(true);
     try {
       const challenge = await lockInChallenge({
-        coordinates: shape.coordinates,
+        rings: shape.rings,
         boundaryMetres: shape.perimeterMetres,
         swimMetres,
       });
@@ -188,14 +323,14 @@ export default function TraceScreen() {
           (message.suggested
             ? 'A circle sized for that swim, from the middle of the map.'
             : 'Your territory. Draw again to replace it.') +
-            (message.trimmed ? ' Trimmed to the coastline.' : '')
+            (message.trimmed ? ' Trimmed to the coastline.' : '') +
+            (message.rings.length > 1
+              ? ` Water splits it into ${message.rings.length} areas; their outlines are added together.`
+              : '')
         );
         break;
       case 'areaTapped':
-        if (message.nickname) {
-          const since = message.claimedAt ? ` since ${formatDate(message.claimedAt)}` : '';
-          setStatus(message.mine ? `That's your area${since}.` : `Held by ${message.nickname}${since}.`);
-        }
+        setTapped(territory.find((a) => a.id === message.id) ?? null);
         break;
       case 'error':
         setStatus(`Map problem: ${message.message}`);
@@ -229,16 +364,28 @@ export default function TraceScreen() {
     );
   }
 
+  const tabs = (
+    <View style={styles.tabs}>
+      <Pressable style={[styles.tab, tab === 'map' && styles.tabOn]} onPress={() => openTab('map')}>
+        <Text style={[styles.tabText, tab === 'map' && styles.tabTextOn]}>🗺️ Map</Text>
+      </Pressable>
+      <Pressable style={[styles.tab, tab === 'leaderboard' && styles.tabOn]} onPress={() => openTab('leaderboard')}>
+        <Text style={[styles.tabText, tab === 'leaderboard' && styles.tabTextOn]}>🏆 Leaderboard</Text>
+      </Pressable>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
+      <StatusBar style="light" />
       <View style={styles.header}>
         <Text style={styles.title}>🦈 Sharked</Text>
         {profile ? (
-          <Pressable style={styles.me} onPress={() => editProfile(profile)}>
+          <Pressable style={styles.me} onPress={openSwimmers}>
             <View style={[styles.swatch, { backgroundColor: profile.colour }]} />
             <Text style={styles.subtitle}>
               {profile.nickname}
-              {myAreas > 0 ? ` · ${myAreas} ${myAreas === 1 ? 'area' : 'areas'} held` : ''} ✏️
+              {myAreas > 0 ? ` · ${myAreas} ${myAreas === 1 ? 'area' : 'areas'} held` : ''} ▾
             </Text>
           </Pressable>
         ) : myAreas > 0 ? (
@@ -246,70 +393,129 @@ export default function TraceScreen() {
             {myAreas} {myAreas === 1 ? 'area' : 'areas'} held
           </Text>
         ) : null}
+        {tabs}
       </View>
 
-      <View style={styles.mapWrap}>
-        <WebView
-          ref={webview}
-          style={styles.map}
-          originWhitelist={['*']}
-          source={{ html, baseUrl: 'https://localhost' }}
-          onMessage={onMessage}
-          javaScriptEnabled
-        />
-        <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
-          <Text style={styles.locateText}>📍</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.panel}>
-        {pending ? (
-          <View style={styles.pending}>
-            <Text style={styles.pendingText}>
-              🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
-            </Text>
-            <Pressable onPress={cancelPending} disabled={saving}>
-              <Text style={styles.pendingCancel}>Cancel</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {pending ? (
-          <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
-            <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
+      <View style={styles.body}>
+        {/* Kept loaded but hidden on the leaderboard page, so the map doesn't reload. */}
+        <View style={[styles.mapWrap, tab !== 'map' && styles.hidden]}>
+          <WebView
+            ref={webview}
+            style={styles.map}
+            originWhitelist={['*']}
+            source={{ html, baseUrl: 'https://localhost' }}
+            onMessage={onMessage}
+            javaScriptEnabled
+          />
+          <Pressable style={styles.locate} onPress={() => goToMe().catch(() => {})} disabled={!mapReady}>
+            <Text style={styles.locateText}>📍</Text>
           </Pressable>
-        ) : null}
-        {shape ? (
-          <>
-            <Text style={styles.label}>Swim to claim it</Text>
-            <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
-            <Text style={styles.lengths}>
-              about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
-              {formatDistance(shape.perimeterMetres)}
-            </Text>
-          </>
-        ) : null}
-        <Text style={styles.status}>{status}</Text>
-        {shape && !pending ? (
-          <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
-            <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
-          </Pressable>
-        ) : null}
-        {shape && pending ? (
-          <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
-        ) : null}
-        <View style={styles.buttons}>
-          <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
-            <Text style={styles.buttonText}>
-              🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
-            </Text>
-          </Pressable>
-          <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
-            <Text style={styles.buttonText}>🗑️ Clear</Text>
-          </Pressable>
+          {tapped ? (
+            <View style={styles.areaCard}>
+              <View style={[styles.areaSwatch, { backgroundColor: tapped.colour }]} />
+              <View style={styles.areaInfo}>
+                <Text style={styles.areaName}>{tapped.mine ? `${tapped.nickname} (you)` : tapped.nickname}</Text>
+                <Text style={styles.areaLine}>
+                  Held for {formatHeldFor(tapped.claimed_at)} · since {formatDate(tapped.claimed_at)}
+                </Text>
+                {tapped.swim_metres ? (
+                  <Text style={styles.areaLine}>Won with a {formatDistance(tapped.swim_metres)} swim</Text>
+                ) : null}
+              </View>
+              <Pressable onPress={() => setTapped(null)} hitSlop={12}>
+                <Text style={styles.areaClose}>✕</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
+
+        {tab === 'map' ? (
+          <View style={styles.panel}>
+            {pending ? (
+              <View style={styles.pending}>
+                <Text style={styles.pendingText}>
+                  🦈 Pending: swim {formatDistance(pending.swim_metres)} in one go
+                </Text>
+                <Pressable onPress={cancelPending} disabled={saving}>
+                  <Text style={styles.pendingCancel}>Cancel</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {pending ? (
+              <Pressable style={[styles.button, styles.swum]} onPress={markSwum} disabled={saving}>
+                <Text style={styles.buttonText}>{saving ? 'Saving…' : '✅ I swam it (test)'}</Text>
+              </Pressable>
+            ) : null}
+            {shape ? (
+              <>
+                <Text style={styles.label}>Swim to claim it</Text>
+                <Text style={styles.distance}>{formatDistance(swimMetres)}</Text>
+                <Text style={styles.lengths}>
+                  about {Math.round(swimMetres / 25)} lengths of a 25 m pool · outline{' '}
+                  {formatDistance(shape.perimeterMetres)}
+                </Text>
+              </>
+            ) : null}
+            <Text style={styles.status}>{status}</Text>
+            {shape && !pending ? (
+              <Pressable style={[styles.button, styles.lockIn]} onPress={lockIn} disabled={saving}>
+                <Text style={styles.buttonText}>{saving ? 'Saving…' : '🔒 Lock in this challenge'}</Text>
+              </Pressable>
+            ) : null}
+            {shape && pending ? (
+              <Text style={styles.status}>Finish or cancel your pending challenge to lock in a new one.</Text>
+            ) : null}
+            <View style={styles.buttons}>
+              <Pressable style={styles.button} onPress={() => setPickerOpen(true)} disabled={!mapReady}>
+                <Text style={styles.buttonText}>
+                  🏊 {target ? formatDistance(target) : 'Pick a swim'} ▾
+                </Text>
+              </Pressable>
+              <Pressable style={styles.button} onPress={clear} disabled={!mapReady}>
+                <Text style={styles.buttonText}>🗑️ Clear</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.board}>
+            <Text style={styles.boardHelp}>
+              Ranked by the total outline of the land each swimmer holds right now. Lose land and
+              your total drops.
+            </Text>
+            {leadersError ? <Text style={styles.error}>{leadersError}</Text> : null}
+            <View style={styles.boardList}>
+              <FlatList
+                ref={boardRef}
+                data={leaders ?? []}
+                keyExtractor={(row) => row.user_id}
+                refreshing={leaders === null && !leadersError}
+                onRefresh={loadLeaders}
+                onViewableItemsChanged={onRowsSeen}
+                viewabilityConfig={ROWS_SEEN}
+                onScrollToIndexFailed={({ index }) =>
+                  boardRef.current?.scrollToOffset({ offset: index * 80, animated: true })
+                }
+                ListEmptyComponent={
+                  leaders ? <Text style={styles.boardHelp}>Nobody holds any land yet.</Text> : null
+                }
+                renderItem={({ item, index }) => boardRow(item, index)}
+              />
+              {/* Your own row stays in sight: pinned to the bottom while you're
+                  further down the list, to the top once you've scrolled past. */}
+              {myPin ? (
+                <Pressable
+                  style={[styles.boardPinned, myPin === 'top' ? { top: 0 } : { bottom: 0 }]}
+                  onPress={() => boardRef.current?.scrollToIndex({ index: myIndex, viewPosition: 0.5 })}
+                >
+                  {boardRow(leaders[myIndex], myIndex)}
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
+        )}
       </View>
 
-      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+      <Modal visible={pickerOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setPickerOpen(false)}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>How far do you want to swim?</Text>
@@ -331,6 +537,7 @@ export default function TraceScreen() {
       <Modal
         visible={profileOpen}
         transparent
+        statusBarTranslucent
         animationType="fade"
         onRequestClose={() => profile && setProfileOpen(false)}
       >
@@ -372,6 +579,64 @@ export default function TraceScreen() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={swimmersOpen} transparent statusBarTranslucent animationType="fade" onRequestClose={() => setSwimmersOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setSwimmersOpen(false)}>
+          <View style={[styles.sheet, styles.tallSheet]}>
+            <ScrollView>
+              <Text style={styles.sheetTitle}>Playing as</Text>
+              <View>
+                {swimmers.map((s) => (
+                  <Pressable
+                    key={s.id}
+                    style={styles.swimmerRow}
+                    disabled={s.current || saving}
+                    onPress={() => changeSwimmer(() => switchToSwimmer(s.id))}
+                  >
+                    <View style={[styles.areaSwatch, { backgroundColor: s.colour }]} />
+                    <Text style={[styles.optionText, s.current && styles.optionChosen]}>
+                      {s.nickname}
+                      {s.current ? '  ✓' : ''}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable
+                style={styles.swimmerRow}
+                onPress={() => {
+                  setSwimmersOpen(false);
+                  editProfile(profile);
+                }}
+              >
+                <Text style={styles.optionText}>✏️ Change nickname or colour</Text>
+              </Pressable>
+              <Pressable
+                style={styles.swimmerRow}
+                disabled={saving}
+                onPress={() => changeSwimmer(addTestSwimmer)}
+              >
+                <Text style={styles.optionText}>➕ Add a pretend swimmer (test)</Text>
+              </Pressable>
+              <Text style={[styles.cardHelp, styles.sheetHelp]}>
+                Pretend swimmers are for testing: switch to one, draw and claim areas, and they'll show
+                up in their own colour, stealing land like a real swimmer would.
+              </Text>
+              <Text style={[styles.optionText, styles.settingTitle]}>🌊 Cut across the mouth of water that runs inland</Text>
+              <View style={styles.chips}>
+                {INLET_CHOICES.map((m) => (
+                  <Pressable key={m} style={[styles.chip, m === inletDepth && styles.chipOn]} onPress={() => chooseInletDepth(m)}>
+                    <Text style={[styles.chipText, m === inletDepth && styles.chipTextOn]}>{m === 0 ? 'Off' : formatDistance(m)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Text style={[styles.cardHelp, styles.sheetHelp]}>
+                Water that runs at least this far inland (rivers, estuaries) is cut straight across its
+                mouth. Anything shorter, like a cove or creek, is followed. Applies to the next shape.
+              </Text>
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -400,6 +665,171 @@ const styles = StyleSheet.create({
     color: '#9FD3F0',
     fontSize: 13,
     marginTop: 2,
+  },
+  tabs: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  tab: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 16,
+    backgroundColor: '#145A86',
+  },
+  tabOn: {
+    backgroundColor: '#FFFFFF',
+  },
+  tabText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  tabTextOn: {
+    color: '#0B3D5C',
+  },
+  body: {
+    flex: 1,
+  },
+  hidden: {
+    display: 'none',
+  },
+  board: {
+    flex: 1,
+    backgroundColor: '#0B3D5C',
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
+  boardHelp: {
+    color: '#9FD3F0',
+    fontSize: 14,
+    textAlign: 'center',
+    marginVertical: 12,
+    paddingHorizontal: 16,
+  },
+  boardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#145A86',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+  },
+  boardList: {
+    flex: 1,
+  },
+  boardPinned: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    backgroundColor: '#0B3D5C',
+    elevation: 8,
+  },
+  boardRowMine: {
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  boardRank: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    width: 32,
+    textAlign: 'center',
+  },
+  boardName: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: 'bold',
+  },
+  boardLine: {
+    color: '#9FD3F0',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  boardScore: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  settingTitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginTop: 16,
+  },
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 16,
+  },
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: '#E8F4FB',
+  },
+  chipOn: {
+    backgroundColor: '#0B3D5C',
+  },
+  chipText: {
+    color: '#0B3D5C',
+    fontSize: 14,
+  },
+  chipTextOn: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  tallSheet: {
+    maxHeight: '85%',
+  },
+  sheetHelp: {
+    paddingHorizontal: 24,
+  },
+  swimmerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  areaCard: {
+    position: 'absolute',
+    // Below the 📍 button.
+    top: 72,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    elevation: 6,
+  },
+  areaSwatch: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+  },
+  areaInfo: {
+    flex: 1,
+  },
+  areaName: {
+    color: '#0B3D5C',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  areaLine: {
+    color: '#145A86',
+    fontSize: 14,
+    marginTop: 2,
+  },
+  areaClose: {
+    color: '#0B3D5C',
+    fontSize: 20,
+    paddingHorizontal: 4,
   },
   me: {
     flexDirection: 'row',
@@ -489,8 +919,7 @@ const styles = StyleSheet.create({
   locate: {
     position: 'absolute',
     left: 12,
-    // Sits above the Mapbox logo, which has to stay visible.
-    bottom: 40,
+    top: 12,
     width: 48,
     height: 48,
     borderRadius: 24,
@@ -521,6 +950,7 @@ const styles = StyleSheet.create({
   lengths: {
     color: '#9FD3F0',
     fontSize: 14,
+    textAlign: 'center',
   },
   status: {
     color: '#9FD3F0',

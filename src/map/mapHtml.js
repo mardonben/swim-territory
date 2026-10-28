@@ -66,35 +66,34 @@ ${outlineScript}
     });
   }
 
-  function setShape(coords) {
-    map.getSource('shape').setData(coords.length < 3 ? emptyFeature() : {
+  // rings: one outline per piece of the shape ([] to clear).
+  function setShape(rings) {
+    map.getSource('shape').setData(rings.length === 0 ? emptyFeature() : {
       type: 'Feature',
-      geometry: { type: 'Polygon', coordinates: [coords] },
+      geometry: { type: 'MultiPolygon', coordinates: rings.map((r) => [r]) },
     });
   }
 
-  // Sea, rivers and lakes drawn on screen (or in a box of it), as polygons.
-  function waterFeatures(box) {
-    return map.queryRenderedFeatures(box)
+  // Sea, rivers and lakes drawn on screen, as polygons.
+  function waterFeatures() {
+    return map.queryRenderedFeatures()
       .filter((f) => f.sourceLayer === 'water')
       .filter((f) => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')
       .map((f) => ({ type: 'Feature', properties: {}, geometry: f.geometry }));
   }
 
-  function boxAround(loop) {
-    const pixels = loop.map((c) => map.project(c));
-    const xs = pixels.map((p) => p.x);
-    const ys = pixels.map((p) => p.y);
-    const pad = 60;
-    return [
-      [Math.min(...xs) - pad, Math.min(...ys) - pad],
-      [Math.max(...xs) + pad, Math.max(...ys) + pad],
-    ];
+  // The part of the map on screen, as a polygon.
+  function viewPolygon() {
+    const b = map.getBounds();
+    return turf.bboxPolygon([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
   }
 
   function sendShape(shape, suggested) {
-    setShape(shape.coords);
-    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, coordinates: shape.coords });
+    setShape(shape.rings);
+    // Centre the new area in view.
+    const [w, south, e, n] = turf.bbox(turf.multiLineString(shape.rings));
+    map.fitBounds([[w, south], [e, n]], { padding: 40, maxZoom: 17, duration: 600 });
+    send({ type: 'shape', perimeterMetres: shape.perimeterMetres, trimmed: shape.trimmed, suggested: !!suggested, rings: shape.rings });
   }
 
   function finishTrace() {
@@ -102,9 +101,10 @@ ${outlineScript}
     traced = [];
     setLine('trace', []);
     try {
-      sendShape(shapeFromLoop(loop, waterFeatures(boxAround(loop))));
+      sendShape(shapeFromLoop(loop, waterFeatures(), viewPolygon()));
     } catch (e) {
-      send({ type: 'error', message: 'Could not make a shape from that loop. Try drawing it again.' });
+      setShape([]);
+      send({ type: 'error', message: e.message === SEA ? SEA : 'Could not make a shape from that loop. Try drawing it again.' });
     }
   }
 
@@ -140,8 +140,8 @@ ${outlineScript}
   function onTap(point) {
     const hit = map.queryRenderedFeatures(point, { layers: ['territory-fill'] })[0];
     send(hit
-      ? { type: 'areaTapped', nickname: hit.properties.nickname, mine: hit.properties.mine, claimedAt: hit.properties.claimedAt }
-      : { type: 'areaTapped', nickname: null });
+      ? { type: 'areaTapped', id: hit.properties.id }
+      : { type: 'areaTapped', id: null });
   }
 
   function onTouchEnd(e) {
@@ -164,27 +164,31 @@ ${outlineScript}
       setLine('trace', []);
       setShape([]);
     },
+    resize() {
+      map.resize();
+    },
+    // How far inland (metres) water must run to be cut across at its mouth.
+    setInletDepth(metres) {
+      inletDepthMetres = metres;
+    },
     flyTo(lng, lat) {
       map.flyTo({ center: [lng, lat], zoom: Math.max(map.getZoom(), 15) });
     },
-    // Everyone's territory: [{ geometry, mine, nickname, colour, claimedAt }],
+    // Everyone's territory: [{ id, geometry, mine, nickname, colour }],
     // each in its holder's colour with their nickname on it.
     showTerritory(areas) {
       map.getSource('territory').setData({
         type: 'FeatureCollection',
         features: areas.map((a) => ({
           type: 'Feature',
-          properties: { mine: a.mine, nickname: a.nickname, colour: a.colour, claimedAt: a.claimedAt },
+          properties: { id: a.id, mine: a.mine, nickname: a.nickname, colour: a.colour },
           geometry: a.geometry,
         })),
       });
     },
-    // The locked-in challenge waiting for its swim, or null to remove it.
-    showPending(coords) {
-      map.getSource('pending').setData(coords ? {
-        type: 'Feature',
-        geometry: { type: 'Polygon', coordinates: [coords] },
-      } : emptyFeature());
+    // The locked-in challenge's GeoJSON outline, or null to remove it.
+    showPending(geometry) {
+      map.getSource('pending').setData(geometry ? { type: 'Feature', geometry } : emptyFeature());
     },
     showMe(lng, lat) {
       map.getSource('me').setData({ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] } });
@@ -199,9 +203,9 @@ ${outlineScript}
       map.fitBounds([[center[0] - dLng, center[1] - dLat], [center[0] + dLng, center[1] + dLat]], { duration: 0, padding: 10 });
       map.once('idle', () => {
         try {
-          sendShape(circleShape(center, targetPerimeterMetres, waterFeatures()), true);
+          sendShape(circleShape(center, targetPerimeterMetres, waterFeatures(), viewPolygon()), true);
         } catch (e) {
-          send({ type: 'error', message: 'Could not find an area to suggest here.' });
+          send({ type: 'error', message: e.message === SEA ? SEA + ' Move the map inland and pick again.' : 'Could not find an area to suggest here.' });
         }
       });
     },
